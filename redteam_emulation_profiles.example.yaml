@@ -1,0 +1,229 @@
+# PentestX — perfiles de emulación purple-team
+# Uso exclusivo en laboratorio, loopback o staging explícitamente allowlisted.
+# Estos perfiles NO crean malware, backdoors, C2 real ni exfiltración.
+version: 1
+profile_family: authorized_purple_team_emulation
+lab_only: true
+
+scope:
+  allowed_targets:
+    - 127.0.0.1
+    - localhost
+  allowed_schemes: [http, https]
+  require_written_authorization: true
+  require_synthetic_dataset: true
+  require_isolated_staging: true
+  network_mode: loopback_only
+  allowed_methods: [GET, HEAD]
+  forbidden_methods: [POST, PUT, PATCH, DELETE, CONNECT, TRACE]
+  follow_redirects: false
+  rate_limit_per_second: 1
+  max_concurrency: 1
+  timeout_seconds: 5
+  max_total_requests: 20
+
+controls:
+  dry_run_default: true
+  no_shell_execution: true
+  no_arbitrary_commands: true
+  no_binary_payloads: true
+  no_weaponized_documents: true
+  no_real_credentials: true
+  no_real_personal_data: true
+  no_persistence_writes: true
+  no_remote_control: true
+  no_external_callbacks: true
+  no_data_exfiltration: true
+  no_data_destruction: true
+  redact_headers: [authorization, proxy-authorization, cookie, set-cookie]
+  persist_full_response_body: false
+  require_evidence_hash: true
+  stop_on_unexpected_state_change: true
+
+canaries:
+  artifact: PENTESTX_ARTIFACT_CANARY
+  trigger: PENTESTX_TRIGGER_CANARY
+  persistence: PENTESTX_PERSISTENCE_CANARY
+  telemetry: PENTESTX_TELEMETRY_CANARY
+  impact: PENTESTX_IMPACT_CANARY
+
+profiles:
+  target_research_authorized:
+    stage: target_research
+    purpose: Inventoryar únicamente activos declarados en un manifiesto aprobado.
+    input:
+      type: authorized_asset_manifest
+      path: ./lab-assets.yaml
+    operations:
+      - validate_scope_manifest
+      - classify_target
+      - verify_loopback_or_allowlisted_staging
+    network: none
+    evidence:
+      finding_id: EMU-SCOPE-001
+      status: candidate
+      requires_manual_review: true
+
+  artifact_pairing_inert:
+    stage: artifact_pairing
+    purpose: Asociar un artefacto de demostración inerte con una etiqueta de escenario.
+    artifact:
+      type: text_or_json_canary
+      marker: PENTESTX_ARTIFACT_CANARY
+      format: json
+      synthetic: true
+      executable: false
+      macro_enabled: false
+      embedded_script: false
+      exploit_reference: false
+    operations:
+      - calculate_sha256
+      - attach_scenario_metadata
+      - persist_local_manifest
+    evidence:
+      finding_id: EMU-ARTIFACT-001
+      status: candidate
+      requires_manual_review: true
+
+  delivery_simulation_local:
+    stage: delivery_simulation
+    purpose: Simular entrega copiando el artefacto a un directorio temporal local.
+    source: ./lab-artifacts/PENTESTX_ARTIFACT_CANARY.json
+    destination: ./workspace/demo-delivery/
+    transport: local_filesystem_copy
+    network: none
+    allowed_destinations:
+      - ./workspace/demo-delivery/
+    operations:
+      - copy_to_temp
+      - calculate_sha256
+      - record_delivery_event
+    forbidden_transports: [email, public_web, usb, smb, ftp, ssh]
+    evidence:
+      finding_id: EMU-DELIVERY-001
+      status: candidate
+      requires_manual_review: true
+
+  trigger_simulation_no_execution:
+    stage: trigger_simulation
+    purpose: Registrar un evento de activación sin interpretar código ni lanzar procesos.
+    input:
+      marker: PENTESTX_TRIGGER_CANARY
+      handler: local_event_logger
+    operations:
+      - read_marker
+      - write_local_event_log
+      - calculate_sha256
+    execution:
+      process_spawned: false
+      shell_invoked: false
+      code_interpreted: false
+      callback_observed: false
+    evidence:
+      finding_id: EMU-TRIGGER-001
+      status: candidate
+      requires_manual_review: true
+
+  persistence_audit_readonly:
+    stage: persistence_audit
+    purpose: Auditar mecanismos de persistencia de forma read-only sin instalar ni modificar entradas.
+    target: local_sandbox
+    marker: PENTESTX_PERSISTENCE_CANARY
+    operations:
+      - list_user_autostart_entries
+      - list_scheduled_tasks_metadata
+      - list_service_metadata
+      - hash_observed_metadata
+    write_operations: false
+    install_backdoor: false
+    modify_startup: false
+    delete_artifacts: false
+    evidence:
+      finding_id: EMU-PERSISTENCE-001
+      status: candidate
+      requires_manual_review: true
+
+  c2_loopback_telemetry:
+    stage: telemetry_simulation
+    purpose: Simular telemetría local unidireccional sin control remoto ni comandos.
+    listener:
+      bind: 127.0.0.1
+      port: 18080
+      protocol: http
+      direction: local_fixture_to_local_log
+    message:
+      marker: PENTESTX_TELEMETRY_CANARY
+      schema: event_only
+      synthetic: true
+    operations:
+      - emit_local_event
+      - record_timestamp
+      - calculate_sha256
+    remote_control: false
+    command_channel: false
+    external_network: false
+    evidence:
+      finding_id: EMU-C2-001
+      status: candidate
+      requires_manual_review: true
+
+  impact_exfil_simulation_synthetic:
+    stage: impact_simulation
+    purpose: Medir el flujo de impacto sobre una copia sintética sin exfiltrar ni destruir datos.
+    dataset:
+      source: ./lab-fixtures/synthetic_dataset.json
+      classification: synthetic
+      record_count: 3
+      contains_real_data: false
+    operations:
+      - copy_to_temp_sandbox
+      - redact_sensitive_like_fields
+      - calculate_sha256
+      - generate_impact_summary
+    destination: ./workspace/demo-impact/
+    exfiltration: false
+    destruction: false
+    external_upload: false
+    evidence:
+      finding_id: EMU-IMPACT-001
+      status: candidate
+      requires_manual_review: true
+
+  full_chain_emulation_safe:
+    stage: chained_emulation
+    purpose: Ejecutar todas las fases como eventos locales y no destructivos.
+    sequence:
+      - target_research_authorized
+      - artifact_pairing_inert
+      - delivery_simulation_local
+      - trigger_simulation_no_execution
+      - persistence_audit_readonly
+      - c2_loopback_telemetry
+      - impact_exfil_simulation_synthetic
+    prerequisites:
+      - lab_only
+      - written_authorization
+      - synthetic_dataset
+      - dry_run_reviewed
+    stop_conditions:
+      - target_not_loopback_or_allowlisted
+      - unexpected_state_change
+      - network_destination_not_loopback
+      - non_synthetic_data_detected
+      - attempted_process_spawn
+      - attempted_shell_execution
+    evidence:
+      finding_id: EMU-CHAIN-001
+      status: candidate
+      requires_manual_review: true
+
+reporting:
+  statuses: [candidate, confirmed_in_lab, rejected, needs_manual_review]
+  store_command_line: false
+  store_secrets: false
+  store_full_bodies: false
+  store_sha256: true
+  output_files:
+    - emulation_manifest.json
+    - emulation_events.jsonl
+    - EMULATION_REPORT.md

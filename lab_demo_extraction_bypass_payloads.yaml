@@ -1,0 +1,237 @@
+# DEMO ONLY: escenarios locales con datos sintéticos.
+# Target permitido únicamente: http://127.0.0.1:8080
+# Los valores canario son literales inertes; no son payloads de explotación.
+version: 1
+lab_only: true
+target_allowlist:
+  - http://127.0.0.1:8080
+  - http://localhost:8080
+data_classification: synthetic
+
+controls:
+  require_loopback: true
+  allowed_methods: [GET, HEAD]
+  forbidden_methods: [POST, PUT, PATCH, DELETE, CONNECT, TRACE]
+  follow_redirects: false
+  max_requests_per_scenario: 3
+  rate_limit_per_second: 1
+  max_concurrency: 1
+  timeout_seconds: 5
+  stop_on_unexpected_state_change: true
+  persist_full_response_body: false
+  redact_headers: [authorization, proxy-authorization, cookie, set-cookie]
+
+canaries:
+  sql: PENTESTX_SQL_CANARY
+  xss: PENTESTX_XSS_CANARY
+  ldap: PENTESTX_LDAP_CANARY
+  command: PENTESTX_CMD_CANARY
+  parameter: PENTESTX_PARAM_CANARY
+  extraction: DEMO_SYNTHETIC_RECORD_001
+  bypass: DEMO_ACCESS_BOUNDARY_CHECK
+
+scenarios:
+  extraction_simulation:
+    purpose: Demonstrate retrieval of a synthetic record from a local fixture.
+    request:
+      method: GET
+      path: /demo/extraction
+      query:
+        record_id: DEMO-001
+      headers:
+        X-Demo-Mode: extraction
+    expected:
+      status: 200
+      body_contains: DEMO_SYNTHETIC_RECORD_001
+      body_must_not_contain: [real_password, real_token, real_database]
+    evidence:
+      finding_id: LAB-EXTRACTION-001
+      status: candidate
+      requires_manual_review: true
+
+  access_bypass_simulation:
+    purpose: Demonstrate a denied access boundary using a synthetic viewer account.
+    request:
+      method: GET
+      path: /demo/access-check
+      query:
+        resource_id: DEMO-OBJECT-001
+      headers:
+        X-Demo-Mode: access-boundary
+        X-Demo-Actor: viewer
+    expected:
+      status: 403
+      body_contains: DEMO_ACCESS_BOUNDARY_CHECK
+      state_change: false
+    evidence:
+      finding_id: LAB-BYPASS-001
+      status: rejected_if_200
+      requires_manual_review: true
+
+  sql_canary:
+    purpose: Confirm that an application treats an SQL canary as literal input in a local fixture.
+    request:
+      method: GET
+      path: /demo/input
+      query:
+        kind: sql
+        value: PENTESTX_SQL_CANARY
+      headers:
+        X-Demo-Mode: literal-input
+    expected:
+      status: 200
+      body_contains: PENTESTX_SQL_CANARY
+      database_query_executed: false
+      state_change: false
+    evidence:
+      finding_id: LAB-SQL-001
+      status: candidate
+      requires_manual_review: true
+
+  xss_canary:
+    purpose: Confirm that a reflection point escapes an inert XSS canary.
+    request:
+      method: GET
+      path: /demo/reflect
+      query:
+        value: PENTESTX_XSS_CANARY
+      headers:
+        X-Demo-Mode: escaped-reflection
+    expected:
+      status: 200
+      body_contains: PENTESTX_XSS_CANARY
+      markup_executed: false
+      script_context: false
+    evidence:
+      finding_id: LAB-XSS-001
+      status: candidate
+      requires_manual_review: true
+
+  ldap_canary:
+    purpose: Confirm that an LDAP canary is handled as ordinary input by a local fixture.
+    request:
+      method: GET
+      path: /demo/directory-search
+      query:
+        search: PENTESTX_LDAP_CANARY
+      headers:
+        X-Demo-Mode: literal-directory-input
+    expected:
+      status: 200
+      body_contains: PENTESTX_LDAP_CANARY
+      directory_filter_changed: false
+      records_disclosed: false
+    evidence:
+      finding_id: LAB-LDAP-001
+      status: candidate
+      requires_manual_review: true
+
+  command_canary:
+    purpose: Confirm that a command canary is not interpreted by a local fixture.
+    request:
+      method: GET
+      path: /demo/utility
+      query:
+        value: PENTESTX_CMD_CANARY
+      headers:
+        X-Demo-Mode: literal-command-input
+    expected:
+      status: 200
+      body_contains: PENTESTX_CMD_CANARY
+      process_spawned: false
+      shell_invoked: false
+      callback_observed: false
+    evidence:
+      finding_id: LAB-CMD-001
+      status: candidate
+      requires_manual_review: true
+
+  modified_parameter_negative:
+    purpose: Demonstrate server-side validation of a read-only parameter variation.
+    request:
+      method: GET
+      path: /demo/profile
+      query:
+        user_id: DEMO-USER-001
+        role: PENTESTX_PARAM_CANARY
+      headers:
+        X-Demo-Mode: parameter-validation
+        X-Demo-Actor: viewer
+    expected:
+      status: 403
+      body_contains: DEMO_ACCESS_BOUNDARY_CHECK
+      state_change: false
+      privilege_change: false
+    evidence:
+      finding_id: LAB-PARAM-001
+      status: candidate
+      requires_manual_review: true
+
+  extraction_redaction:
+    purpose: Demonstrate local evidence capture with sensitive-looking synthetic fields redacted.
+    request:
+      method: GET
+      path: /demo/extraction
+      query:
+        record_id: DEMO-REDACTION-001
+      headers:
+        X-Demo-Mode: redaction
+    expected:
+      status: 200
+      body_contains: [DEMO_SYNTHETIC_RECORD_001, REDACTED]
+      raw_secret_persisted: false
+    evidence:
+      finding_id: LAB-EXTRACTION-002
+      status: candidate
+      requires_manual_review: true
+
+  bypass_replay_negative:
+    purpose: Demonstrate that replaying a viewer request does not cross a synthetic boundary.
+    request:
+      method: GET
+      path: /demo/access-check
+      query:
+        resource_id: DEMO-OBJECT-PRIVATE
+      headers:
+        X-Demo-Mode: access-boundary
+        X-Demo-Actor: viewer
+        X-Demo-Replay: true
+    expected:
+      status: 403
+      body_contains: DEMO_ACCESS_BOUNDARY_CHECK
+      state_change: false
+      privileged_data: false
+    evidence:
+      finding_id: LAB-BYPASS-002
+      status: candidate
+      requires_manual_review: true
+
+  combined_safe_regression:
+    purpose: Run the canaries in a local regression fixture and ensure all remain inert.
+    request:
+      method: GET
+      path: /demo/regression
+      query:
+        sql: PENTESTX_SQL_CANARY
+        xss: PENTESTX_XSS_CANARY
+        ldap: PENTESTX_LDAP_CANARY
+        command: PENTESTX_CMD_CANARY
+        parameter: PENTESTX_PARAM_CANARY
+      headers:
+        X-Demo-Mode: regression
+    expected:
+      status: 200
+      all_canaries_reflected_as_text: true
+      execution: false
+      state_change: false
+      data_extraction: false
+    evidence:
+      finding_id: LAB-REGRESSION-001
+      status: candidate
+      requires_manual_review: true
+
+reporting:
+  statuses: [candidate, needs_manual_review, confirmed_in_lab, rejected]
+  require_evidence_hash: true
+  persist_full_response_body: false
+  persist_synthetic_fixture_output_only: true

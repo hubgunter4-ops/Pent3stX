@@ -1,0 +1,118 @@
+# Perfiles de validación activa controlada para PentestX.
+# Diseñados para targets autorizados y endpoints de prueba.
+# No incluyen payloads ejecutables ni métodos mutantes.
+version: 1
+policy_name: pentestx_safe_injection_validation
+scope:
+  authorization_required: true
+  allowed_methods: [GET, HEAD]
+  forbidden_methods: [POST, PUT, PATCH, DELETE, CONNECT, TRACE]
+  query_parameters_only: true
+  follow_redirects: false
+  max_total_requests: 20
+  max_concurrency: 1
+  rate_limit_per_second: 1
+  timeout_seconds: 10
+  stop_on_positive_signal: true
+  require_test_endpoint: true
+
+profiles:
+  sql_injection_safe:
+    family: SQLi
+    owasp: A05
+    finding_categories: [sqli, sql_error, injection_candidate]
+    methods: [GET]
+    parameter_scope: query_only
+    canary: PENTESTX_SQL_CANARY
+    encoding_variants: [plain, url_encoded]
+    baseline_requests: 1
+    validation_requests: 2
+    max_requests: 3
+    detection:
+      compare_status: true
+      compare_body_length: true
+      compare_error_signals: true
+      require_repeatable_difference: true
+    forbidden_features: [data_extraction, authentication_bypass, shell, file_read, file_write]
+
+  xss_reflection_safe:
+    family: XSS
+    owasp: A05
+    finding_categories: [xss, reflected_input, reflection_candidate]
+    methods: [GET]
+    parameter_scope: query_only
+    canary: PENTESTX_XSS_CANARY
+    encoding_variants: [plain, url_encoded, json_string]
+    baseline_requests: 1
+    validation_requests: 2
+    max_requests: 3
+    detection:
+      compare_status: true
+      locate_reflection_context: true
+      require_raw_canary_reflection: true
+      execute_markup: false
+      require_repeatable_difference: true
+    forbidden_features: [script_execution,_dom_manipulation,_stored_input,_authentication_bypass]
+
+  ldap_filter_safe:
+    family: LDAP
+    owasp: A05
+    finding_categories: [ldap, ldap_error, directory_injection_candidate]
+    methods: [GET]
+    parameter_scope: query_only
+    canary: PENTESTX_LDAP_CANARY
+    encoding_variants: [plain, url_encoded]
+    baseline_requests: 1
+    validation_requests: 2
+    max_requests: 3
+    detection:
+      compare_status: true
+      compare_body_length: true
+      compare_directory_error_signals: true
+      require_repeatable_difference: true
+    forbidden_features: [filter_operators, wildcard_broadening,_authentication_bypass, directory_dump]
+
+  command_injection_safe:
+    family: command_injection
+    owasp: A05
+    finding_categories: [command_injection, os_command_candidate, shell_error]
+    methods: [GET]
+    parameter_scope: query_only
+    canary: PENTESTX_CMD_CANARY
+    encoding_variants: [plain, url_encoded]
+    baseline_requests: 1
+    validation_requests: 1
+    max_requests: 2
+    detection:
+      compare_status: true
+      compare_body_length: true
+      compare_server_error_signals: true
+      require_repeatable_difference: true
+      require_out_of_band_signal: false
+    forbidden_features: [shell_metacharacters, command_execution, file_read, file_write, process_spawn, network_callback]
+
+  modified_parameters_safe:
+    family: parameter_mutation
+    owasp: A01
+    finding_categories: [parameter_tampering, access_control_candidate, validation_candidate]
+    methods: [GET]
+    parameter_scope: query_only
+    canary: PENTESTX_PARAM_CANARY
+    mutation_strategies: [type_preserving_boundary, optional_parameter_omission, duplicate_readonly_parameter]
+    baseline_requests: 1
+    validation_requests: 3
+    max_requests: 4
+    detection:
+      compare_status: true
+      compare_body_length: true
+      compare_authorization_boundary: true
+      require_repeatable_difference: true
+    forbidden_features: [state_change, price_change, privilege_change, identifier_enumeration, authentication_bypass]
+
+reporting:
+  status_values: [candidate, needs_manual_review, confirmed_by_owner, rejected]
+  require_evidence_hash: true
+  redact_headers: [authorization, proxy-authorization, cookie, set-cookie]
+  persist_full_response_body: false
+  persist_response_hash: true
+  retain_sensitive_values: false

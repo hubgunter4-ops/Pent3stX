@@ -1,0 +1,31 @@
+# Política local de perfiles. No permite comandos arbitrarios ni sobrescribe perfiles fijos.
+# Solo se aceptan las claves y rangos descritos en README.md.
+profiles:
+  ffuf_lab:
+    tool: ffuf
+    binary: ffuf
+    package: ffuf
+    mode: ffuf
+    requires_categories:
+      - directories
+    rate: 3
+    threads: 1
+    timeout: 10
+    max_requests: 100
+    wordlist: /usr/share/wordlists/dirb/common.txt
+    match_codes: [200, 204, 301, 302, 401, 403]
+    extensions: [php, html]
+
+  sqlmap_lab:
+    tool: sqlmap
+    binary: sqlmap
+    package: sqlmap
+    mode: sqlmap
+    requires_categories:
+      - sqli
+    threads: 1
+    timeout: 10
+    retries: 1
+    level: 1
+    risk: 1
+    technique: BE

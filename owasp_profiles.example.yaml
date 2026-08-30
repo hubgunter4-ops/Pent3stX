@@ -1,0 +1,112 @@
+# Política OWASP Top 10:2025 para pentestx.py.
+# Solo checks read-only con GET/HEAD; no payloads ni métodos mutantes.
+profiles:
+  owasp_a01_access_control:
+    owasp_version: "2025"
+    checks: [A01]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 32768
+
+  owasp_a02_misconfiguration:
+    owasp_version: "2025"
+    checks: [A02]
+    rate_limit: 3
+    timeout: 10
+    max_urls: 20
+    max_requests: 40
+    methods: [HEAD, GET]
+    follow_redirects: false
+    body_limit: 16384
+
+  owasp_a03_supply_chain:
+    owasp_version: "2025"
+    checks: [A03]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 65536
+
+  owasp_a04_crypto:
+    owasp_version: "2025"
+    checks: [A04]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [HEAD, GET]
+    follow_redirects: false
+    body_limit: 16384
+
+  owasp_a05_injection_signals:
+    owasp_version: "2025"
+    checks: [A05]
+    rate_limit: 1
+    timeout: 10
+    max_urls: 10
+    max_requests: 10
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 65536
+
+  owasp_a06_insecure_design:
+    owasp_version: "2025"
+    checks: [A06]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 32768
+
+  owasp_a07_authentication:
+    owasp_version: "2025"
+    checks: [A07]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [HEAD, GET]
+    follow_redirects: false
+    body_limit: 16384
+
+  owasp_a08_integrity:
+    owasp_version: "2025"
+    checks: [A08]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 65536
+
+  owasp_a09_logging:
+    owasp_version: "2025"
+    checks: [A09]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 32768
+
+  owasp_a10_exceptions:
+    owasp_version: "2025"
+    checks: [A10]
+    rate_limit: 2
+    timeout: 10
+    max_urls: 10
+    max_requests: 20
+    methods: [GET]
+    follow_redirects: false
+    body_limit: 32768
