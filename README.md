@@ -260,3 +260,7 @@ La interfaz requiere Python 3 y Tkinter. No añade dependencias Python obligator
 ### Propuesta visual inspirada en Ettercap
 
 La GUI adopta una composición de estación de trabajo similar a las herramientas clásicas GTK de seguridad: menú, toolbar, árbol de operaciones, mapa de sesión, inspector lateral, pestañas de consola/findings y barra de estado. Se utiliza únicamente como referencia de organización visual. La interfaz sigue siendo PentestX y no incorpora sniffing, MITM, ARP poisoning, interceptación, filtrado de tráfico ni ninguna otra función de Ettercap. El detalle del diseño y su flujo están documentados en [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md).
+
+### Ejemplo visual
+
+La composición propuesta puede verse en [`docs/screenshots/pentestx-gui-ettercap-model.png`](docs/screenshots/pentestx-gui-ettercap-model.png). La imagen usa un target sintético de laboratorio y `dry-run`; es una referencia visual, no una ejecución.
