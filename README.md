@@ -274,3 +274,6 @@ La GUI clasifica sintácticamente IP, dominio, URL, CIDR y listas de targets sin
 ### Sugerencias basadas en puertos
 
 El inspector permite analizar puertos introducidos manualmente o extraídos de campos semánticos de un `findings_db.json` local. Las reglas sugieren `with_owasp` para servicios web y mantienen `standard` para bases de datos, SMB/NFS, SSH/Telnet/RDP y DNS, sin habilitar credenciales, fuerza bruta, extracción ni consultas de red. Las reglas son explícitas y revisables; no ejecutan escaneos ni se aplican automáticamente. El detalle está en [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md).
+
+
+La detección por puertos también reconoce SSH, FTP/FTPS, SMTP y POP3/IMAP. Para estos servicios solo recomienda revisión pasiva de configuración, cifrado, banners o exposición; no habilita autenticación, fuerza bruta, envío de mensajes ni acceso a buzones.

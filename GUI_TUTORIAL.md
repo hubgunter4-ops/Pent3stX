@@ -96,3 +96,15 @@ Las reglas actuales son conservadoras:
 | Otros | `standard` y revisión manual. |
 
 Las reglas no se aplican automáticamente. **Aplicar regla** solo modifica el pipeline y, para puertos web, el campo de puertos intrusivos. El plan debe revisarse y continuar en `dry-run` antes de cualquier ejecución.
+
+
+### Reglas adicionales de servicios comunes
+
+| Servicio y puertos | Recomendación segura |
+|---|---|
+| SSH (`22`) | Revisión pasiva de versión, configuración y exposición. |
+| FTP/FTPS (`21`, `990`) | Revisión pasiva de cifrado, modo anónimo y configuración. |
+| SMTP (`25`, `465`, `587`) | Revisión pasiva de TLS, banner y relay autorizado. |
+| POP3/IMAP (`110`, `143`, `993`, `995`) | Revisión pasiva de TLS y configuración; no se accede a buzones. |
+
+Estas reglas no prueban credenciales, no envían mensajes, no abren sesiones contra los servicios y no activan fuerza bruta. Solo generan una recomendación de plan `standard` que el operador debe revisar.
