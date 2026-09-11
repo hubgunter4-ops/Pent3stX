@@ -19,17 +19,17 @@ python3 pentestx_gui.py
 
 La GUI no requiere paquetes Python adicionales para funcionar. `PyYAML` continúa siendo opcional y solo se necesita para cargar políticas YAML.
 
-## 3. Flujo recomendado: primero dry-run
+## 3. Ejecutar un plan autorizado
 
 1. Escribe un **Target** que controles o que esté incluido en una autorización escrita.
 2. Selecciona `passive` para comenzar sin tráfico activo o `active` si el alcance aprobado lo permite.
 3. Marca las fases necesarias. Si no se marca ninguna, la interfaz usa `passive` como valor seguro.
-4. Deja activado **Modo dry-run**.
-5. Pulsa **Previsualizar plan**.
-6. Revisa la consola. El comando mostrado incluye `--dry-run`; PentestX debe generar un manifiesto local sin ejecutar acciones ni tráfico de red.
+4. Revisa la tabla **PLAN OVERVIEW**, el workspace y los parámetros.
+5. Marca **Autorización escrita** y pulsa **Ejecutar**.
+6. Acepta la confirmación visual solo después de revisar el alcance.
 7. Revisa el workspace indicado y conserva únicamente la evidencia que corresponda a las reglas de compromiso.
 
-El botón **Ejecutar plan** también mantiene `dry-run` mientras esa casilla esté activa. Para una ejecución real hay que desactivar la casilla, marcar la declaración de autorización y aceptar la confirmación adicional que muestra la interfaz.
+La GUI no incluye una acción dry-run. Para generar un manifiesto sin tráfico, usa la opción `--dry-run` de la CLI.
 
 ## 4. Configuración de fases
 
@@ -41,7 +41,7 @@ Para un pipeline correlacionado, selecciona `correlated` y elige `standard`, `wi
 
 La consola muestra stdout y stderr combinados del proceso. Los artefactos se escriben bajo el workspace configurado, incluyendo manifiestos de sesión, findings, capturas hashadas y reportes cuando la fase correspondiente se ejecuta. El código de salida aparece en la etiqueta de estado superior.
 
-No interpretes un resultado `dry-run` como evidencia de una vulnerabilidad: es únicamente una comprobación de argumentos y plan. Los findings generados por la revisión basada en evidencia siguen requiriendo revisión manual.
+Los findings generados por la revisión basada en evidencia siguen requiriendo revisión manual.
 
 ## 6. Comprobación local sin tocar la red
 
@@ -53,7 +53,7 @@ python3 pentestx.py --target example.com --scope passive \
   --confirm-written-authorization --dry-run
 ```
 
-Para verificar la interfaz en una sesión gráfica, arráncala y usa un target de documentación como `example.com` con dry-run. El dry-run no resuelve el target ni contacta Internet.
+Para verificar la interfaz en una sesión gráfica, arráncala y usa un target de documentación como `example.com`; la interfaz no resuelve el target localmente.
 
 ## 7. Resolución de problemas
 
@@ -68,7 +68,7 @@ La segunda iteración adopta una composición de estación de trabajo similar a 
 
 La adaptación a PentestX cambia los conceptos de red por los propios de esta herramienta: `TARGET SCOPE`, fases autorizadas, `SESSION MAP`, `SESSION INSPECTOR`, findings, pipelines, perfiles allowlisted y consola de `pentestx.py`. No se añadieron sniffing, ARP poisoning, MITM, interceptación, filtrado de tráfico ni otras funciones de Ettercap.
 
-El árbol izquierdo permite activar o desactivar fases; el panel central muestra el plan y la consola; el inspector derecho concentra pipeline, perfiles, findings, políticas YAML, workspace y `dry-run`. La configuración mantiene el mismo contrato de seguridad de la CLI.
+El árbol izquierdo permite activar o desactivar fases; el panel central muestra el plan y la consola; el inspector derecho concentra pipeline, perfiles, findings, políticas YAML y workspace. La configuración mantiene el mismo contrato de seguridad de la CLI.
 
 
 ## 9. Detección de parámetros y sugerencias

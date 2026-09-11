@@ -46,7 +46,7 @@ python3 pentestx.py --help
 python3 pentestx.py --interactive
 ```
 
-La interfaz gráfica inicia con `dry-run` activado. La primera operación recomendada es revisar el plan y el manifiesto sin generar tráfico.
+La interfaz gráfica muestra el plan y solicita autorización y confirmación antes de ejecutar una operación.
 
 ## Tutorial paso a paso
 
@@ -75,9 +75,9 @@ El inspector derecho puede sugerir parámetros según el target y los puertos de
 
 Las reglas distinguen HTTP/HTTPS, SSH, FTP/FTPS, SMTP, POP3/IMAP, SMB/NFS, DNS, MySQL, PostgreSQL, Redis y otros servicios comunes. Para bases de datos, correo, acceso remoto y compartición, las recomendaciones son pasivas y no habilitan credenciales, fuerza bruta, extracción ni comandos.
 
-### 4. Ejecutar un dry-run
+### 4. Validar un plan con la CLI
 
-Mantén activado **Dry-run (recomendado)** y pulsa **▶ Dry-run** o **Previsualizar plan**. También puedes usar la CLI:
+Para generar un manifiesto sin tráfico, usa la CLI:
 
 ```bash
 python3 pentestx.py \
@@ -92,7 +92,7 @@ El resultado esperado incluye `DRY-RUN: no se ejecutarán funciones ni tráfico 
 
 ### 5. Ejecutar un plan autorizado
 
-Solo después de revisar el plan, el target, el scope, los puertos, las exclusiones y la autorización, desactiva `dry-run`. La GUI solicita una confirmación adicional. La CLI también exige `--scope active` y `--confirm-written-authorization` para las acciones activas.
+Para ejecutar desde la GUI, revisa el plan, el target, el scope, los puertos, las exclusiones y la autorización; después pulsa **Ejecutar** y acepta la confirmación. La CLI también exige `--scope active` y `--confirm-written-authorization` para las acciones activas.
 
 Ejemplo de previsualización de un pipeline controlado:
 
@@ -161,7 +161,7 @@ python3 pentestx.py --target example.com \
   --dry-run
 ```
 
-La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VALIDATION.md). El `README` documenta el estado actual; el archivo `kk2_original.py` se conserva como referencia inmutable del material original.
+La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VALIDATION.md).
 
 ## Estructura del proyecto
 
@@ -171,7 +171,6 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
 | `kk2_repaired.py` | Módulo legado reparado únicamente para compilar. |
-| `kk2_original.py` | Copia de referencia del módulo original. |
 | `GUI_TUTORIAL.md` | Tutorial extendido de interfaz, sugerencias y telemetría. |
 | `docs/screenshots/` | Capturas visuales de los paneles. |
 | `workspace/` | Evidencia y sesiones generadas localmente. |
