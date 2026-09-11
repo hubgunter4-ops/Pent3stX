@@ -277,3 +277,6 @@ El inspector permite analizar puertos introducidos manualmente o extraídos de c
 
 
 La detección por puertos también reconoce SSH, FTP/FTPS, SMTP y POP3/IMAP. Para estos servicios solo recomienda revisión pasiva de configuración, cifrado, banners o exposición; no habilita autenticación, fuerza bruta, envío de mensajes ni acceso a buzones.
+
+
+La detección por puertos distingue MySQL (`3306`), PostgreSQL (`5432`) y Redis (`6379`) de otros servicios de datos. Las reglas recomiendan revisión pasiva de exposición, TLS y controles de acceso, sin probar credenciales, consultar datos ni enviar comandos.

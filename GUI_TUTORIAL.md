@@ -108,3 +108,14 @@ Las reglas no se aplican automáticamente. **Aplicar regla** solo modifica el pi
 | POP3/IMAP (`110`, `143`, `993`, `995`) | Revisión pasiva de TLS y configuración; no se accede a buzones. |
 
 Estas reglas no prueban credenciales, no envían mensajes, no abren sesiones contra los servicios y no activan fuerza bruta. Solo generan una recomendación de plan `standard` que el operador debe revisar.
+
+
+### Reglas específicas de bases de datos
+
+| Motor | Puerto | Recomendación segura |
+|---|---:|---|
+| MySQL | `3306` | Revisar pasivamente exposición, TLS y configuración. |
+| PostgreSQL | `5432` | Revisar pasivamente exposición, TLS y configuración. |
+| Redis | `6379` | Revisar pasivamente exposición y controles de acceso. |
+
+Estas reglas tienen prioridad sobre la regla genérica de bases de datos. Solo generan una sugerencia `standard`; no prueban credenciales, no consultan tablas o claves y no envían comandos a los servicios.
