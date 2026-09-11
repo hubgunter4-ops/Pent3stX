@@ -78,3 +78,21 @@ La GUI clasifica el target **solo por sintaxis local**, sin resolver DNS, hacer 
 Al escribir un target muestra una recomendación conservadora basada en el tipo detectado. Por ejemplo, una URL sugiere comenzar con `passive` y el pipeline `with_owasp`; una IP sugiere `host_baseline` únicamente si existe autorización para una fase activa; y una red CIDR sugiere `standard` antes de considerar `network_bounded`.
 
 Las sugerencias no se aplican de manera automática. El operador debe pulsar **Aplicar sugerencia**, revisar los valores modificados y volver a revisar target, scope, fases y autorización antes de previsualizar o ejecutar. El botón no ejecuta procesos ni tráfico.
+
+
+## 10. Reglas basadas en puertos detectados
+
+El inspector incluye `Detected ports` y los botones **Analizar puertos** y **Aplicar regla**. El operador puede introducir una lista de puertos o cargar un `findings_db.json` local. La GUI solo lee campos semánticos como `port`, `ports`, `open_ports` o `detected_ports`; no ejecuta Nmap, no consulta servicios y no resuelve hosts.
+
+Las reglas actuales son conservadoras:
+
+| Puertos | Sugerencia |
+|---|---|
+| HTTP/HTTPS y alternativos (`80`, `443`, `8000`, `8080`, `8443`, etc.) | `with_owasp` y revisión de headers/métodos; propone los puertos web detectados para una fase posterior. |
+| Bases de datos (`1433`, `1521`, `3306`, `5432`, `6379`, `9200`, `27017`) | `standard` y revisión pasiva; nunca propone credenciales o extracción. |
+| SMB/NFS (`139`, `445`, `2049`) | `standard` y revisión pasiva; requiere revisar el alcance antes de enumerar. |
+| SSH/Telnet/RDP (`22`, `23`, `3389`) | `standard` y revisión pasiva; no habilita fuerza bruta ni autenticación automática. |
+| DNS (`53`) | `standard`; la GUI no realiza consultas DNS. |
+| Otros | `standard` y revisión manual. |
+
+Las reglas no se aplican automáticamente. **Aplicar regla** solo modifica el pipeline y, para puertos web, el campo de puertos intrusivos. El plan debe revisarse y continuar en `dry-run` antes de cualquier ejecución.

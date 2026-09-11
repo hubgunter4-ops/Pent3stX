@@ -269,3 +269,8 @@ La composición propuesta puede verse en [`docs/screenshots/pentestx-gui-etterca
 ### Detección local y sugerencias
 
 La GUI clasifica sintácticamente IP, dominio, URL, CIDR y listas de targets sin resolverlos ni contactar la red. Según el tipo detectado propone un scope conservador, pipeline y perfil intrusivo compatible. Las sugerencias son explícitas y revisables: no se aplican ni ejecutan automáticamente. Consulta la sección correspondiente de [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md).
+
+
+### Sugerencias basadas en puertos
+
+El inspector permite analizar puertos introducidos manualmente o extraídos de campos semánticos de un `findings_db.json` local. Las reglas sugieren `with_owasp` para servicios web y mantienen `standard` para bases de datos, SMB/NFS, SSH/Telnet/RDP y DNS, sin habilitar credenciales, fuerza bruta, extracción ni consultas de red. Las reglas son explícitas y revisables; no ejecutan escaneos ni se aplican automáticamente. El detalle está en [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md).
