@@ -280,3 +280,8 @@ La detección por puertos también reconoce SSH, FTP/FTPS, SMTP y POP3/IMAP. Par
 
 
 La detección por puertos distingue MySQL (`3306`), PostgreSQL (`5432`) y Redis (`6379`) de otros servicios de datos. Las reglas recomiendan revisión pasiva de exposición, TLS y controles de acceso, sin probar credenciales, consultar datos ni enviar comandos.
+
+
+## Panel integrado de telemetría
+
+La aplicación integra el emisor de `kali-telemetry-gui` en una pestaña separada con icono: **◉ Telemetría**. El panel PentestX y el panel de telemetría mantienen controles y responsabilidades independientes. La nueva pestaña conserva HTTP GET/POST, UDP, reintentos, backoff, carga TXT y métricas de `telemetry_sender.py`. Consulta [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md) para el flujo y sus límites.

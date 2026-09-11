@@ -119,3 +119,14 @@ Estas reglas no prueban credenciales, no envían mensajes, no abren sesiones con
 | Redis | `6379` | Revisar pasivamente exposición y controles de acceso. |
 
 Estas reglas tienen prioridad sobre la regla genérica de bases de datos. Solo generan una sugerencia `standard`; no prueban credenciales, no consultan tablas o claves y no envían comandos a los servicios.
+
+
+## 11. Pestaña de telemetría integrada
+
+La GUI incorpora el emisor del repositorio `kali-telemetry-gui` como una pestaña independiente: **◉ Telemetría**. La pestaña **◈ PentestX** conserva el planificador de evaluaciones y no comparte controles visuales con el panel de telemetría.
+
+El panel integrado permite configurar URL HTTP `GET`/`POST`, destino UDP, puerto, BSSID contextual, intentos totales y backoff. También permite guardar la configuración, encolar un mensaje de prueba, cargar un TXT local de hasta 1 MiB y consultar las métricas de cola, envíos, fallos y reintentos.
+
+El módulo integrado es `telemetry_sender.py` y conserva el envío asíncrono, los límites de 1–1000 intentos y el tratamiento del TXT como datos. El cierre de la ventana detiene el worker del emisor. La telemetría permanece separada de las operaciones PentestX: cambiar de pestaña no ejecuta un plan ni inicia tráfico por sí solo.
+
+Usa exclusivamente receptores que controles o para los que tengas autorización. UDP no cifra ni confirma procesamiento de aplicación; para HTTP prefiere HTTPS cuando corresponda.
