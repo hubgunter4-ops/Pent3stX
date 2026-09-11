@@ -264,3 +264,8 @@ La GUI adopta una composición de estación de trabajo similar a las herramienta
 ### Ejemplo visual
 
 La composición propuesta puede verse en [`docs/screenshots/pentestx-gui-ettercap-model.png`](docs/screenshots/pentestx-gui-ettercap-model.png). La imagen usa un target sintético de laboratorio y `dry-run`; es una referencia visual, no una ejecución.
+
+
+### Detección local y sugerencias
+
+La GUI clasifica sintácticamente IP, dominio, URL, CIDR y listas de targets sin resolverlos ni contactar la red. Según el tipo detectado propone un scope conservador, pipeline y perfil intrusivo compatible. Las sugerencias son explícitas y revisables: no se aplican ni ejecutan automáticamente. Consulta la sección correspondiente de [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md).

@@ -69,3 +69,12 @@ La segunda iteración adopta una composición de estación de trabajo similar a 
 La adaptación a PentestX cambia los conceptos de red por los propios de esta herramienta: `TARGET SCOPE`, fases autorizadas, `SESSION MAP`, `SESSION INSPECTOR`, findings, pipelines, perfiles allowlisted y consola de `pentestx.py`. No se añadieron sniffing, ARP poisoning, MITM, interceptación, filtrado de tráfico ni otras funciones de Ettercap.
 
 El árbol izquierdo permite activar o desactivar fases; el panel central muestra el plan y la consola; el inspector derecho concentra pipeline, perfiles, findings, políticas YAML, workspace y `dry-run`. La configuración mantiene el mismo contrato de seguridad de la CLI.
+
+
+## 9. Detección de parámetros y sugerencias
+
+La GUI clasifica el target **solo por sintaxis local**, sin resolver DNS, hacer ping ni generar solicitudes. Reconoce IP, dominio, URL HTTP/HTTPS, red CIDR, lista de targets y valores inválidos.
+
+Al escribir un target muestra una recomendación conservadora basada en el tipo detectado. Por ejemplo, una URL sugiere comenzar con `passive` y el pipeline `with_owasp`; una IP sugiere `host_baseline` únicamente si existe autorización para una fase activa; y una red CIDR sugiere `standard` antes de considerar `network_bounded`.
+
+Las sugerencias no se aplican de manera automática. El operador debe pulsar **Aplicar sugerencia**, revisar los valores modificados y volver a revisar target, scope, fases y autorización antes de previsualizar o ejecutar. El botón no ejecuta procesos ni tráfico.
