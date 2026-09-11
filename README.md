@@ -230,3 +230,28 @@ Cada importación del módulo legado crea una sesión en `workspace/pentestx_ses
 El archivo original terminaba en una sentencia incompleta: `elif opt ==`. Esa línea provocaba `SyntaxError` durante la compilación. La copia reparada completa únicamente las ramas faltantes del menú de escaneo y deja la gestión de entrada, el registro, la correlación y el reporting en las funciones originales. No se han cambiado sus firmas ni se han incorporado funciones nuevas al módulo legado.
 
 > Esta herramienta es un ejecutor de pruebas de seguridad autorizadas. La confirmación de la CLI no sustituye la autorización escrita ni las reglas de compromiso del propietario del activo.
+
+
+## Interfaz gráfica PentestX GUI
+
+El repositorio incluye `pentestx_gui.py`, una interfaz de escritorio local basada en **Tkinter/ttk**. Es una capa de presentación sobre `pentestx.py`: no duplica la lógica de validación ni modifica el módulo legado. El diseño propone una evolución visual del panel Tactical Neon de terminal hacia una consola operativa de escritorio con cuatro zonas claras:
+
+- **Alcance y autorización:** target, scope y declaración visible de autorización escrita.
+- **Fases del plan:** selección de acciones soportadas por la CLI.
+- **Parámetros y evidencia:** pipelines, perfiles, findings, políticas YAML y límites del escaneo controlado.
+- **Consola de ejecución:** salida en tiempo real, código de salida y estado de sesión.
+
+La propuesta usa una paleta oscura de alto contraste, acentos cyan/azul para navegación, verde para estados seguros y ámbar/rojo para advertencias. El modo `dry-run` está activado por defecto para que la primera operación sea una revisión del plan. La ejecución real requiere desactivar `dry-run`, declarar autorización y aceptar una confirmación adicional.
+
+### Arranque
+
+```bash
+sudo apt install -y python3-tk
+python3 pentestx_gui.py
+```
+
+Consulta [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md) para el flujo completo, las validaciones y la comprobación local.
+
+### Compatibilidad
+
+La interfaz requiere Python 3 y Tkinter. No añade dependencias Python obligatorias. Los controles de seguridad siguen centralizados en `pentestx.py`: las acciones activas exigen `--scope active` y `--confirm-written-authorization`; el modo `dry-run` no ejecuta funciones de red.

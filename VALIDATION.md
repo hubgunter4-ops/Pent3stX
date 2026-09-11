@@ -67,3 +67,14 @@ Fecha de validación: 2026-08-26.
 La copia `kk2_original.py` mantiene deliberadamente el `SyntaxError` que traía el archivo adjunto en la línea 793 (`elif opt ==`). Esto permite conservar una referencia exacta e inmutable del original. La copia ejecutable `kk2_repaired.py` solo completa la cola truncada de `menu_scan()`; no cambia las firmas ni la lógica previa de sus funciones. La capa externa maneja `traceroute` mediante un adaptador opcional cuando se ejecuta `active` o un pipeline correlacionado.
 
 La herramienta no expone desde su CLI ni desde el menú guiado las funciones originales de fuerza bruta, explotación, post-explotación, persistencia, pivoting, exfiltración o wireless. Las funciones siguen presentes en el módulo legado porque se solicitó conservarlas, pero la capa externa ofrece acciones de reconocimiento, enumeración web, escaneo, correlación, reporting, revisión basada en evidencia, perfiles limitados para `ffuf`/`sqlmap` y un escaneo intrusivo controlado de Nmap. La fase `vulnerability` solo procesa resultados ya registrados; los perfiles requieren findings compatibles, no habilitan extracción de datos, shells ni cambios de estado, y sus argumentos se construyen mediante allowlist. La persistencia implementada es únicamente local para evidencias y manifiestos; no establece persistencia en el target. Todas las acciones sobre targets requieren que el operador declare autorización escrita; las acciones activas requieren además `--scope active`.
+
+### Validación de la interfaz gráfica
+
+| Prueba | Resultado |
+|---|---|
+| `python3 -m py_compile pentestx_gui.py pentestx.py kk2_repaired.py` | Correcta. |
+| GUI con `dry-run` activado por defecto | Implementada; la primera acción recomendada no genera tráfico. |
+| `pentestx.py` dry-run desde el flujo documentado | Correcta; salida 0 y manifiesto local. |
+| Comprobación de herramientas desde la GUI | Aislada como operación de mantenimiento sin target ni fases seleccionadas. |
+| Confirmación de ejecución real | Requiere desactivar `dry-run`, autorización marcada y confirmación visual. |
+| Documentación | `GUI_TUTORIAL.md` y sección dedicada en `README.md`. |
