@@ -60,3 +60,12 @@ Para verificar la interfaz en una sesión gráfica, arráncala y usa un target d
 Si Python informa que no existe `tkinter`, instala el paquete del sistema `python3-tk`. Si una fase rechaza la operación, lee el mensaje de la consola: la interfaz no omite las restricciones de la CLI. Si un perfil YAML no carga, valida primero su sintaxis con `yaml.safe_load` y confirma que las claves estén dentro de las allowlists documentadas.
 
 Usa únicamente targets propios o expresamente autorizados. No introduzcas credenciales, cookies, secretos ni datos de producción en los campos de la GUI o en archivos de evidencia.
+
+
+## 8. Propuesta visual inspirada en Ettercap
+
+La segunda iteración adopta una composición de estación de trabajo similar a la de herramientas clásicas GTK de seguridad, tomando como referencia la organización visual de Ettercap: **menú superior**, **barra de acciones**, **árbol de operaciones**, **área central de sesión**, **inspector lateral** y **barra de estado**. La referencia es únicamente de composición y densidad; no se copiaron funciones, código, identidad visual ni operaciones de Ettercap.
+
+La adaptación a PentestX cambia los conceptos de red por los propios de esta herramienta: `TARGET SCOPE`, fases autorizadas, `SESSION MAP`, `SESSION INSPECTOR`, findings, pipelines, perfiles allowlisted y consola de `pentestx.py`. No se añadieron sniffing, ARP poisoning, MITM, interceptación, filtrado de tráfico ni otras funciones de Ettercap.
+
+El árbol izquierdo permite activar o desactivar fases; el panel central muestra el plan y la consola; el inspector derecho concentra pipeline, perfiles, findings, políticas YAML, workspace y `dry-run`. La configuración mantiene el mismo contrato de seguridad de la CLI.
