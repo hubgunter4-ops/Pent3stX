@@ -33,6 +33,30 @@ PyYAML es opcional y solo se necesita para políticas YAML:
 python3 -m pip install -r requirements.txt
 ```
 
+Para preparar una instalación completa de PentestX en Ubuntu, Kali o Fedora,
+la CLI ofrece un instalador unificado. La simulación no ejecuta `apt-get` ni
+`dnf`; la instalación real requiere confirmación explícita y solo usa paquetes
+allowlisted por distribución:
+
+```bash
+python3 pentestx.py \
+  --install-dependencies \
+  --confirm-tool-install
+
+# Revisar los comandos sin modificar el sistema
+python3 pentestx.py \
+  --install-dependencies \
+  --distro ubuntu \
+  --confirm-tool-install \
+  --dry-run
+```
+
+Este flujo instala Python, Tkinter, PyYAML, `coreutils` y las herramientas de
+sistema compatibles (`ffuf`, `sqlmap`, `nmap` y `traceroute`). También genera
+un `installation_manifest.json` dentro del workspace local. Para instalar
+solo el conjunto de un perfil o una herramienta concreta se conservan
+`--install-tools` y `--install-tool`.
+
 ### Abrir la interfaz gráfica
 
 ```bash

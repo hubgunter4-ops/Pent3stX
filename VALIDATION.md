@@ -20,6 +20,9 @@ Fecha de validación: 2026-08-26.
 | Menú interactivo actualizado | Expone perfiles, instalación, fuente de findings y ejecución de perfil; salir con `q` no ejecuta acciones. |
 | Instalación simulada en Ubuntu, Kali y Fedora | Genera comandos `apt-get` para Ubuntu/Kali y `dnf` para Fedora sin ejecutar cambios. |
 | Instalación individual de nmap | Instala únicamente el paquete allowlisted solicitado en `dry-run`. |
+| Instalador unificado de dependencias | `--install-dependencies` planifica Python, Tkinter, PyYAML, coreutils y ffuf/sqlmap/nmap/traceroute para Ubuntu, Kali y Fedora. |
+| Instalador sin confirmación | Rechaza la ejecución real antes de invocar `apt-get` o `dnf`. |
+| Pruebas unitarias del instalador | `python3 -m unittest discover -s tests -v` ejecuta 4 pruebas correctamente. |
 | Escaneo intrusivo en `dry-run` | Construye comando Nmap limitado por puertos, tasa, timeout y exclusiones sin tráfico. |
 | Target cubierto por exclusión CIDR | Rechazado con código de salida 2 antes de iniciar el escaneo. |
 | Auto-perfil para IP | Selecciona `host_baseline` con puertos de host y límites conservadores. |
