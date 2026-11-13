@@ -1,0 +1,15 @@
+# Alcance aprobado para PentestX. Copia este archivo a scope.yaml y
+# completa authorization_reference con la ruta del documento de
+# autorización escrita que cubre estos targets. Sin esa referencia,
+# PentestX se niega a ejecutar nada contra un target.
+#
+# Solo se permiten los targets listados aquí. Las redes privadas
+# (RFC1918), link-local (169.254.0.0/16, incluye 169.254.169.254),
+# 0.0.0.0/0, multicast y loopback distinto de 127.0.0.1 se rechazan
+# siempre, aunque aparezcan en esta lista.
+authorization_reference: docs/AUTORIZACION-contaia.md
+targets:
+  - contaia.site
+  - 127.0.0.1
+exclusions:
+  - 169.254.169.254

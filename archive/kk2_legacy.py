@@ -1,3 +1,22 @@
+"""ARCHIVADO — NUNCA SE EJECUTA (nivel 1, 2026-11-13).
+
+Este archivo es el módulo legado kk2_repaired.py, conservado solo como
+referencia histórica. pentestx.py NO lo importa ni lo carga: load_legacy()
+lanza RuntimeError si algo intenta usarlo.
+
+Motivo del archivo: conservaba Hydra con credenciales en texto plano,
+John/Hashcat, Metasploit con exec(code), escaneos agresivos e interactivos
+(Nmap -A -p-, Masscan a 1000 pps, Nikto/Nuclei/Gobuster), exfiltración y
+borrado de logs en post_exploit, y telemetría sin autenticación.
+
+Las funciones controladas que lo sustituyen viven en pentestx.py
+(run_intrusive_scan, run_owasp_web_scan, run_tool_profile) y en
+pentestx_controlled.py (Session, Scope, validate_scope_target).
+
+NO ejecutar este archivo. NO importarlo. NO restaurar su uso sin una
+revisión de seguridad completa y autorización explícita.
+"""
+
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════╗

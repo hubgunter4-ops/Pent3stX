@@ -1,0 +1,7 @@
+# Evidencia local: nunca se versiona (puede contener hallazgos del
+# laboratorio). El workspace incluye findings_db.json, manifiestos,
+# salidas de herramientas y reportes de cada sesión.
+workspace/
+__pycache__/
+*.pyc
+*.log

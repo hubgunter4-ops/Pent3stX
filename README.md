@@ -1,8 +1,20 @@
 # PentestX autorizado
 
-**Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas.** PentestX conserva el módulo legado, añade una capa CLI con controles de alcance y autorización, y ofrece una GUI de escritorio basada en Tkinter/ttk. La GUI también integra un panel independiente de telemetría para destinos HTTP/UDP, reintentos y métricas.
+**Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas.** El módulo legado está archivado en `archive/kk2_legacy.py` y nunca se ejecuta; PentestX añade una capa CLI con controles de alcance y autorización, y ofrece una GUI de escritorio basada en Tkinter/ttk. La GUI también integra un panel independiente de telemetría para destinos HTTP/UDP, reintentos y métricas.
 
 > **Uso obligatorio:** trabaja únicamente sobre activos propios o cubiertos por autorización escrita y reglas de compromiso vigentes. La confirmación de la interfaz no sustituye la autorización del propietario.
+
+## Nivel 1 — reparación de seguridad (2026-11-13)
+
+1. **Legado archivado:** `kk2_repaired.py` (Hydra con credenciales en texto plano, John/Hashcat, Metasploit con `exec(code)`, escaneos agresivos, exfiltración y borrado de logs) se movió a `archive/kk2_legacy.py` con aviso. `pentestx.py` no lo importa ni lo carga: `load_legacy()` lanza `RuntimeError` si algo intenta usarlo.
+2. **Pipelines controlados:** `standard`/`with_intrusive`/`with_owasp`/`full_web` solo usan pasos controlados (passive local, active `nmap -sn --max-rate 5`, intrusive `nmap -sT -sV` acotado, OWASP web GET/HEAD con topes, vulnerability/correlate/report locales). No existe ningún paso que invoque el legado; el modo real sin perfil controlado se niega.
+3. **Alcance con `scope.yaml`:** por defecto solo `contaia.site` y `127.0.0.1`. Se rechazan redes privadas, `169.254.169.254`, `0.0.0.0/0`, redes más amplias que /24, multicast y loopback distinto de `127.0.0.1`. Toda acción con target exige `--authorization-reference` (ruta o identificador del documento de autorización escrita).
+4. **Dry-run en la GUI:** botón «Ver plan (dry-run)» que muestra el comando exacto y lo ejecuta en modo dry-run; la ejecución real se niega hasta haber revisado el plan para ese comando exacto.
+5. **`ffuf_safe` practicable:** wordlist propia de 200 entradas (`wordlists/ffuf_safe_200.txt`) y `max_requests: 200` explícito; una wordlist mayor que el tope se rechaza.
+6. **Evidencia protegida:** `workspace/` en `.gitignore`; los cuerpos de respuesta se guardan solo como extracto de 1.024 caracteres con SHA-256; credenciales redactadas en texto y en estructuras (`redact_text`/`redact_value`, incluido `Authorization: Bearer <token>`); el escaneo OWASP se detiene ante 429/403.
+7. **Licencia, tests y CI:** licencia MIT (`LICENSE`), tests en `tests/` (`python3 -m unittest discover -s tests -v`, solo mocks y dry-run, sin herramientas externas) y CI en `.github/workflows/ci.yml`.
+
+**Fuera del nivel 1:** la telemetría (`telemetry_sender.py` y el panel de la GUI) sigue sin cifrado ni autenticación — solo destinos de laboratorio y sin secretos en el código.
 
 ## Vista general
 
@@ -152,12 +164,18 @@ La estructura visual de la GUI se explica con mayor detalle en [`GUI_TUTORIAL.md
 Ejecuta las comprobaciones básicas:
 
 ```bash
-python3 -m py_compile pentestx_gui.py telemetry_sender.py pentestx.py kk2_repaired.py
+python3 -m py_compile pentestx_gui.py telemetry_sender.py pentestx.py pentestx_controlled.py
+python3 -m unittest discover -s tests -v
 python3 pentestx.py --check-tools
-python3 pentestx.py --target example.com \
-  --scope passive \
-  --action passive correlate report \
+# Dry-run contra contaia.site (requiere scope.yaml y referencia de autorización;
+# copia scope.example.yaml a scope.yaml y completa la referencia):
+python3 pentestx.py --target https://contaia.site \
+  --scope active \
+  --action correlated \
+  --pipeline-profile standard \
   --confirm-written-authorization \
+  --authorization-reference docs/AUTORIZACION-contaia.md \
+  --scope-file scope.yaml \
   --dry-run
 ```
 
@@ -170,13 +188,18 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 | `pentestx_gui.py` | GUI principal con pestañas PentestX y Telemetría. |
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
-| `kk2_repaired.py` | Módulo legado reparado únicamente para compilar. |
+| `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |
+| `archive/kk2_legacy.py` | Módulo legado archivado; nunca se ejecuta. |
+| `scope.example.yaml` | Alcance de ejemplo (copiar a `scope.yaml`). |
+| `wordlists/ffuf_safe_200.txt` | Wordlist de 200 entradas para el perfil `ffuf_safe`. |
+| `tests/` | Tests automatizados de nivel 1 (unittest, mocks y dry-run). |
+| `.github/workflows/ci.yml` | CI: compila los módulos y corre los tests. |
 | `GUI_TUTORIAL.md` | Tutorial extendido de interfaz, sugerencias y telemetría. |
 | `docs/screenshots/` | Capturas visuales de los paneles. |
 | `workspace/` | Evidencia y sesiones generadas localmente. |
 
 ## Estado y licencia
 
-El proyecto es experimental y está orientado a laboratorios y activos autorizados. Revisa [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md) y las reglas de compromiso antes de usarlo. El repositorio no declara todavía una licencia de código abierto; no redistribuyas copias modificadas como si tuvieran una licencia permisiva.
+El proyecto es experimental y está orientado a laboratorios y activos autorizados. Revisa [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md) y las reglas de compromiso antes de usarlo. Licencia MIT, ver [`LICENSE`](LICENSE).
 
 Repositorio: [hubgunter4-ops/n](https://github.com/hubgunter4-ops/n)
