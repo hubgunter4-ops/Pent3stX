@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pent3stX Workbench — Design Option 1 — Authorized Security Assessment (Read-Only / Authorized Assessment Only)</title>
+<title>Pent3stX Workbench — Design Option 1 — Authorized Security Assessment</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
 
   <!-- Title bar -->
   <header class="titlebar">
-    <span class="titlebar-text">Pent3stX Workbench — Design Option 1 — Authorized Security Assessment (Read-Only / Authorized Assessment Only)</span>
+    <span class="titlebar-text">Pent3stX Workbench — Design Option 1 — Authorized Security Assessment</span>
     <span class="window-controls">
       <button type="button" class="win-btn" data-win="min" title="Minimize" aria-label="Minimize">—</button>
       <button type="button" class="win-btn" data-win="max" title="Maximize" aria-label="Maximize">▢</button>
@@ -56,7 +56,7 @@
     </div>
     <div class="menu" data-menu="plugins"><button type="button" class="menu-btn">Plugins</button>
       <div class="menu-drop" role="menu">
-        <button type="button" data-action="plugins-none">No plugins loaded (read-only)</button>
+        <button type="button" data-action="plugins-none">No plugins loaded</button>
       </div>
     </div>
     <div class="menu" data-menu="window"><button type="button" class="menu-btn">Window</button>
@@ -132,38 +132,22 @@
       </div>
 
       <div class="map-view" id="mapView">
-        <div class="map-header">Session: SA-2024-011 | Map View • 4 Hosts • 3 Services • Read-Only</div>
+        <div class="map-header" id="mapHeader">Sin sesión | Map View • Sin hosts • Arranca el backend y pulsa Start</div>
         <div class="map" id="sessionMap" aria-label="Session map">
-          <svg class="map-links" viewBox="0 0 600 300" preserveAspectRatio="none" aria-hidden="true">
-            <line x1="300" y1="150" x2="120" y2="70"/><line x1="300" y1="150" x2="470" y2="70"/>
-            <line x1="300" y1="150" x2="140" y2="220"/><line x1="300" y1="150" x2="480" y2="200"/>
-            <line x1="120" y1="70" x2="470" y2="70"/><line x1="140" y1="220" x2="480" y2="200"/>
-          </svg>
-          <button type="button" class="node" style="left:16%;top:18%" data-host="srv-web-01">srv-web-01 (10.10.50.10) •<br>http:80</button>
-          <button type="button" class="node" style="left:62%;top:16%" data-host="srv-api-02">srv-api-02 (10.10.50.11)<br>• api:443</button>
-          <button type="button" class="node" style="left:18%;top:62%" data-host="db-01">db-01 (10.10.50.20) •<br>postgres:5432</button>
-          <button type="button" class="node" style="left:60%;top:58%" data-host="fw-gateway">fw-gateway (10.10.50.1)<br>firewall</button>
-          <span class="node-hub" title="Session hub"></span>
-          <span class="node-dot" style="left:44%;top:30%"></span>
-          <span class="node-dot" style="left:52%;top:64%"></span>
-          <span class="node-dot yellow" style="left:58%;top:78%"></span>
-          <span class="node-dot yellow" style="left:66%;top:74%"></span>
-          <div class="map-scope">Authorized Scope • Confirmed by Client</div>
+          <div class="map-empty" id="mapEmpty">Sin sesión — no hay hosts reales todavía.<br>Arranca el servidor y ejecuta un plan autorizado.</div>
+          <div class="map-scope">Ámbito permitido: contaia.site • 127.0.0.1</div>
         </div>
       </div>
 
       <div class="plan-view" id="planView" hidden>
-        <div class="map-header">Session: SA-2024-011 | Plan Overview • Read-Only</div>
-        <p class="plan-note">Plan: passive → active → OWASP Web Scan → correlation → report. Approved scope: 10.10.50.0/24. No step runs network traffic from this page; Start advances the local simulation only.</p>
+        <div class="map-header">Sin sesión | Plan Overview</div>
+        <p class="plan-note" id="planNote">Sin plan — el plan real aparece aquí tras el dry-run.</p>
       </div>
 
       <table class="tasks" aria-label="Tasks">
         <thead><tr><th>TASK</th><th>TARGET</th><th>STATUS</th><th>OWNER</th><th>ETA</th><th>RISK</th><th>NOTES</th></tr></thead>
-        <tbody>
-          <tr><td>Passive Recon</td><td>10.10.50.0/24</td><td><span class="badge done">Completed</span></td><td>analyst-01</td><td>2024-11-25 13:20</td><td>Low</td><td>No active probes, passive DNS</td></tr>
-          <tr><td>Portscan (TCP)</td><td>10.10.50.10, .11, .20</td><td><span class="badge done">Completed</span></td><td>analyst-01</td><td>2024-11-25 13:45</td><td>Low</td><td>22,80,443,5432 open</td></tr>
-          <tr><td>OWASP Web Scan</td><td>srv-web-01:80</td><td><span class="badge running" id="owaspStatus">Running</span></td><td>analyst-02</td><td>2024-11-25 14:30</td><td>Med</td><td id="owaspNote">In progress, 12 checks</td></tr>
-          <tr><td>Correlation</td><td>All Hosts</td><td><span class="badge pending" id="corrStatus">Pending</span></td><td>—</td><td>—</td><td>—</td><td>Await OWASP results</td></tr>
+        <tbody id="tasksBody">
+          <tr><td colspan="7">Sin sesión — no hay tareas todavía.</td></tr>
         </tbody>
       </table>
     </section>
@@ -179,13 +163,8 @@
 
       <div class="insp-pane" id="pane-pipeline">
         <h2>PIPELINE STATUS</h2>
-        <ol class="pipeline">
-          <li><span class="step">step1</span> <span class="dot-ok">○</span> Passive → <strong>Completed</strong><br><span class="step-time">13:20 UTC</span></li>
-          <li><span class="step">step2</span> <span class="dot-ok">○</span> Active → <strong>Completed</strong><br><span class="step-time">13:45 UTC</span></li>
-          <li><span class="step">step3</span> <span class="dot-run">◐</span> Web Scan → <strong id="pipelineState">Running (<span id="pipelinePct">48</span>%)</strong>
-            <span class="progress"><span class="progress-fill" id="progressFill" style="width:48%"></span></span>
-            <span class="step-time">OWASP ZAP • <span id="checkCount">12</span>/25 checks</span>
-          </li>
+        <ol class="pipeline" id="pipelineSteps">
+          <li>Sin plan — pulsa Start para generar un dry-run.</li>
         </ol>
       </div>
 
@@ -193,28 +172,23 @@
         <h2>PROFILES</h2>
         <p><strong>Profile:</strong> OWASP Web Standard v4<br>Enabled</p>
         <p><strong>Profile:</strong> Portscan Default<br>Enabled</p>
-        <p class="muted">Profiles: 3 active • Ruleset: OWASP v4</p>
+        <p class="muted">Perfiles controlados de la CLI (ffuf_safe, sqlmap_safe). La ejecución usa solo pipelines controlados.</p>
       </div>
 
       <div class="insp-pane" id="pane-findings" hidden>
-        <h2>FINDINGS (7)</h2>
-        <ul class="findings">
-          <li><strong>[MED] Outdated Server Header</strong><br>srv-web-01:80 • CWE-1008 • Risk: Medium</li>
-          <li><strong>[LOW] TLS 1.0 Supported</strong><br>srv-api-02:443 • CWE-326 • Risk: Low</li>
-          <li><strong>[INFO] Open DB Port Detected</strong><br>db-01:5432 • Internal only • Risk: Info</li>
+        <h2 id="findingsTitle">FINDINGS</h2>
+        <ul class="findings" id="findingsList">
+          <li>Sin findings aún — ejecuta un plan real.</li>
         </ul>
-        <p class="muted">Showing 3 of 7 findings. The other 4 are not listed in the design image.</p>
       </div>
 
       <div class="insp-always">
         <h2>PROFILES</h2>
         <p><strong>Profile:</strong> OWASP Web Standard v4<br>Enabled</p>
         <p><strong>Profile:</strong> Portscan Default<br>Enabled</p>
-        <h2>FINDINGS (7)</h2>
-        <ul class="findings">
-          <li><strong>[MED] Outdated Server Header</strong><br>srv-web-01:80 • CWE-1008 • Risk: Medium</li>
-          <li><strong>[LOW] TLS 1.0 Supported</strong><br>srv-api-02:443 • CWE-326 • Risk: Low</li>
-          <li><strong>[INFO] Open DB Port Detected</strong><br>db-01:5432 • Internal only • Risk: Info</li>
+        <h2>FINDINGS</h2>
+        <ul class="findings" id="findingsListAlways">
+          <li>Sin findings aún — ejecuta un plan real.</li>
         </ul>
       </div>
     </aside>
@@ -229,30 +203,57 @@
         <button type="button" data-action="toggle-console" title="Collapse console" aria-label="Collapse console">▭</button>
       </span>
     </div>
-    <pre class="console-body" id="consoleBody" aria-live="polite">[2024-11-25 14:30:12] [+] Initializing OWASP scan on srv-web-01:80 ..
-[2024-11-25 14:30:15] [+] Loading profile: OWASP Web Standard v4
-[2024-11-25 14:30:18] [*] Phase: Passive rules loaded (42 rules)
-[2024-11-25 14:30:22] [*] Running check 12/25: Header Analysis..
-[2024-11-25 14:30:24] [!!] Note: This is an authorized assessment. Do not perform actions outside approved scope.</pre>
-    <div class="status-green">Ready | Authorized Assessment Only — Approved Scope: 10.10.50.0/24</div>
+    <pre class="console-body" id="consoleBody" aria-live="polite">[*] Pent3stX Workbench — modo funcional. Comprobando el backend local…</pre>
+    <div class="status-green" id="statusGreen">Backend no conectado — arranca python3 web-ui/server.py</div>
   </section>
 
   <!-- Bottom status bar -->
   <footer class="statusbar">
-    <span>Session: SA-2024-011 | Hosts: 4 | Services: 5 | Findings: 7 | Warnings: 1</span>
-    <span>User: sec-analyst | 2024-11-25 14:32:08 UTC | v1.2.0-design1</span>
+    <span id="statusSession">Session: — | Sin sesión</span>
+    <span>Backend local: 127.0.0.1:8765 | v2.0-functional</span>
   </footer>
 </div>
 
+<!-- Confirm execution dialog -->
+<dialog id="confirmDialog" class="dialog">
+  <form method="dialog">
+    <h2>Confirmar ejecución</h2>
+    <p>Este es el comando exacto aprobado por el dry-run. Solo se ejecutará este comando, sin cambios:</p>
+    <pre id="confirmCommand" class="confirm-command"></pre>
+    <p class="muted">La ejecución usa solo pipelines controlados y el alcance permitido. Para detenerla, pulsa Pause.</p>
+    <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
+    <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
+  </form>
+</dialog>
+
 <!-- Config dialog -->
 <dialog id="configDialog" class="dialog">
-  <form method="dialog">
-    <h2>Config — read-only session</h2>
-    <p>Session: SA-2024-011<br>Approved scope: 10.10.50.0/24<br>Ruleset: OWASP v4 • Profiles: 3 active</p>
+  <form method="dialog" id="configForm">
+    <h2>Config — ejecución real controlada</h2>
+    <label>Target (solo contaia.site o 127.0.0.1)
+      <input type="text" id="cfgTarget" value="contaia.site">
+    </label>
+    <label>Scope
+      <select id="cfgScope">
+        <option value="passive" selected>passive</option>
+        <option value="active">active</option>
+      </select>
+    </label>
+    <label>Pipeline
+      <select id="cfgPipeline">
+        <option value="standard">standard</option>
+        <option value="with_intrusive">with_intrusive</option>
+        <option value="with_owasp" selected>with_owasp</option>
+        <option value="full_web">full_web</option>
+      </select>
+    </label>
+    <label>Referencia de autorización escrita (obligatoria)
+      <input type="text" id="cfgAuth" placeholder="docs/AUTORIZACION-contaia.md">
+    </label>
     <label><input type="checkbox" id="optMotion"> Reduce motion (disable scanline / pulse animations)</label>
     <label><input type="checkbox" id="optConsole" checked> Keep terminal console fixed at the bottom</label>
-    <p class="muted">This page never contacts the network. Start / Pause only advance the local simulation.</p>
-    <button type="submit" class="dialog-btn">Close</button>
+    <p class="muted">El servidor valida target, scope, pipeline y autorización; las acciones activas exigen scope active. Sin backend, Start no hace nada.</p>
+    <button type="submit" class="dialog-btn">Guardar y cerrar</button>
   </form>
 </dialog>
 
@@ -260,8 +261,8 @@
 <dialog id="aboutDialog" class="dialog">
   <form method="dialog">
     <h2>About Pent3stX Workbench</h2>
-    <p>Design Option 1 — Ettercap classic style. Authorized security assessment, read-only. v1.2.0-design1.</p>
-    <p><strong>Authorized use only.</strong> Do not perform actions outside the approved scope (10.10.50.0/24).</p>
+    <p>Design Option 1 — Ettercap classic style. Interfaz funcional con backend local (127.0.0.1:8765) que ejecuta pentestx.py con dry-run previo y autorización escrita. v2.0-functional.</p>
+    <p><strong>Authorized use only.</strong> Solo targets permitidos (contaia.site, 127.0.0.1) y solo con autorización escrita.</p>
     <button type="submit" class="dialog-btn">Close</button>
   </form>
 </dialog>

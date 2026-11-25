@@ -1,28 +1,42 @@
-/* Pent3stX Workbench — Design Option 1 (local simulation only).
-   No network traffic: Start / Pause only advance the OWASP scan
-   simulation (12/25 checks, 48%) in this page. Every control has a
-   visible effect: it updates the console, the selection, a panel,
-   or a status line. Nothing here runs pentestx.py or any scanner. */
+/* Pent3stX Workbench — Design Option 1 (functional mode).
+   No simulation: every Start goes through the local backend
+   (http://127.0.0.1:8765/, web-ui/server.py), which validates the
+   request and calls the real pentestx.py CLI — dry-run first, then
+   execution only after explicit confirmation of the exact command.
+   Without the backend running, Start/Scan do nothing and the UI says
+   so. Console, Inspector, tasks and findings only show real data
+   returned by the backend. */
 (function () {
   "use strict";
 
+  var API = "";
+  var PHASE_ACTIONS = {
+    passive: ["passive"], discovery: ["passive"], "passive-recon": ["passive"],
+    active: ["active"], "host-probe": ["active"],
+    web: ["web"], crawl: ["web"],
+    ports: ["ports"], portscan: ["ports"],
+    vuln: ["vuln"], "vuln-scan": ["vuln"],
+    owasp_web: ["owasp_web"], "owasp-zap": ["owasp_web"],
+    correlate: ["correlate"], correlation: ["correlate"],
+    report: ["report"], "generate-report": ["report"]
+  };
+
   var state = {
+    connected: false,
+    pentestxPresent: false,
     running: false,
-    checks: 12,
-    totalChecks: 25,
     phase: "owasp_web",
-    timer: null,
-    savedAt: null
+    plan: null,
+    sessionDir: null,
+    config: {
+      target: "contaia.site",
+      scope: "passive",
+      pipeline_profile: "with_owasp",
+      authorization_reference: ""
+    }
   };
 
   var consoleBody = document.getElementById("consoleBody");
-  var progressFill = document.getElementById("progressFill");
-  var pipelinePct = document.getElementById("pipelinePct");
-  var checkCount = document.getElementById("checkCount");
-  var pipelineState = document.getElementById("pipelineState");
-  var owaspStatus = document.getElementById("owaspStatus");
-  var owaspNote = document.getElementById("owaspNote");
-  var corrStatus = document.getElementById("corrStatus");
   var fileInput = document.getElementById("fileInput");
 
   function stamp() {
@@ -37,77 +51,276 @@
     consoleBody.scrollTop = consoleBody.scrollHeight;
   }
 
-  function pct() {
-    return Math.round((state.checks / state.totalChecks) * 100);
+  function logLines(text) {
+    if (!text) return;
+    var lines = String(text).split(/\n/).slice(0, 500);
+    lines.forEach(function (line) {
+      if (line.trim() !== "") consoleBody.textContent += "\n" + line;
+    });
+    consoleBody.scrollTop = consoleBody.scrollHeight;
   }
 
-  function render() {
-    progressFill.style.width = pct() + "%";
-    pipelinePct.textContent = pct();
-    checkCount.textContent = state.checks;
-    if (state.checks >= state.totalChecks) {
-      pipelineState.textContent = "Completed (100%)";
-      owaspStatus.textContent = "Completed";
-      owaspStatus.className = "badge done";
-      owaspNote.textContent = "Completed, 25 checks";
-      corrStatus.textContent = "Running";
-      corrStatus.className = "badge running";
-    } else {
-      pipelineState.textContent = "Running (" + pct() + "%)";
-      owaspStatus.textContent = "Running";
-      owaspStatus.className = "badge running";
-      owaspNote.textContent = "In progress, " + state.checks + " checks";
+  function api(path, options, timeoutMs) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, timeoutMs || 30000);
+    var init = { signal: controller.signal, headers: { "Content-Type": "application/json" } };
+    if (options) {
+      init.method = options.method || "GET";
+      if (options.body !== undefined) init.body = JSON.stringify(options.body);
     }
-    document.querySelectorAll('[data-action="start"]').forEach(function (b) {
-      b.classList.toggle("active", state.running);
+    return fetch(API + path, init).then(function (res) {
+      clearTimeout(timer);
+      return res.json().then(function (data) {
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        return data;
+      });
+    }).catch(function (err) {
+      clearTimeout(timer);
+      throw err;
     });
   }
 
-  function advance() {
-    if (!state.running || state.checks >= state.totalChecks) { stopTimer(); return; }
-    state.checks += 1;
-    log("[*] Running check " + state.checks + "/" + state.totalChecks + ": Header Analysis..");
-    render();
-    if (state.checks >= state.totalChecks) {
-      state.running = false;
-      log("[+] OWASP scan completed: 25/25 checks. Correlation can start.");
-      log("[!!] Note: This is an authorized assessment. Do not perform actions outside approved scope.");
-    }
+  function setStartEnabled(enabled) {
+    document.querySelectorAll('[data-action="start"], [data-action="scan"]').forEach(function (b) {
+      b.disabled = !enabled;
+      b.classList.toggle("disabled", !enabled);
+    });
   }
 
-  function stopTimer() {
-    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  function renderBackend() {
+    var green = document.getElementById("statusGreen");
+    if (state.connected && state.pentestxPresent) {
+      green.textContent = "Backend conectado — pentestx.py disponible. Listo para dry-run.";
+    } else if (state.connected) {
+      green.textContent = "Backend conectado, pero pentestx.py no está en la raíz del repo.";
+    } else {
+      green.textContent = "Backend no conectado — arranca python3 web-ui/server.py";
+    }
+    setStartEnabled(state.connected && state.pentestxPresent && !state.running);
+  }
+
+  function checkBackend() {
+    return api("/api/status", null, 5000).then(function (data) {
+      state.connected = true;
+      state.pentestxPresent = !!data.pentestx_present;
+      if (state.pentestxPresent) {
+        log("[+] Backend conectado en 127.0.0.1:8765. pentestx.py disponible.");
+      } else {
+        log("[!!] Backend conectado, pero pentestx.py no está en " + (data.repo_root || "") + ".");
+      }
+      renderBackend();
+      return loadSessions();
+    }).catch(function () {
+      state.connected = false;
+      state.pentestxPresent = false;
+      log("[!!] Backend no conectado — arranca: python3 web-ui/server.py (desde la raíz del repo) y recarga la página. Start está deshabilitado; no se simula nada.");
+      renderBackend();
+    });
+  }
+
+  function loadSessions() {
+    return api("/api/sessions").then(function (data) {
+      var sessions = data.sessions || [];
+      if (!sessions.length) {
+        log("[*] Sin sesiones todavía en workspace/pentestx_sessions/.");
+        return;
+      }
+      var latest = sessions[0];
+      state.sessionDir = latest.name;
+      document.getElementById("statusSession").textContent =
+        "Session: " + latest.name + " | Sin datos de hosts (ver Findings)";
+      document.getElementById("mapHeader").textContent =
+        "Session: " + latest.name + " | Map View • Datos reales de la sesión";
+      log("[*] Última sesión real: " + latest.name + " (manifiesto: " + (latest.manifest ? "sí" : "no") + ", findings: " + (latest.findings ? "sí" : "no") + ").");
+      return loadFindings(latest.name);
+    }).catch(function (err) {
+      log("[!!] No se pudieron listar las sesiones: " + err.message);
+    });
+  }
+
+  function findingText(f) {
+    if (f && typeof f === "object") {
+      var title = f.title || f.name || f.finding || f.id || JSON.stringify(f);
+      var sev = f.severity || f.risk || "";
+      var target = f.target || f.host || f.url || "";
+      var cwe = f.cwe || f.cwe_id || "";
+      return [sev ? "[" + String(sev).toUpperCase() + "]" : "", title, target, cwe]
+        .filter(Boolean).join(" — ");
+    }
+    return String(f);
+  }
+
+  function renderFindings(findings) {
+    var title = document.getElementById("findingsTitle");
+    if (title) title.textContent = "FINDINGS (" + findings.length + ")";
+    ["findingsList", "findingsListAlways"].forEach(function (id) {
+      var ul = document.getElementById(id);
+      if (!ul) return;
+      ul.innerHTML = "";
+      if (!findings.length) {
+        var li = document.createElement("li");
+        li.textContent = "Sin findings en esta sesión.";
+        ul.appendChild(li);
+        return;
+      }
+      findings.forEach(function (f) {
+        var item = document.createElement("li");
+        item.textContent = findingText(f);
+        ul.appendChild(item);
+      });
+    });
+  }
+
+  function loadFindings(sessionName) {
+    return api("/api/findings?session=" + encodeURIComponent(sessionName)).then(function (data) {
+      renderFindings(data.findings || []);
+      log("[+] Findings de " + sessionName + ": " + (data.findings || []).length + " (tal cual vienen de findings_db.json).");
+    }).catch(function (err) {
+      renderFindings([]);
+      log("[*] Sin findings para " + sessionName + ": " + err.message);
+    });
+  }
+
+  function renderPlan(plan) {
+    state.plan = plan;
+    var steps = document.getElementById("pipelineSteps");
+    steps.innerHTML = "";
+    var actions = plan.actions || [];
+    actions.forEach(function (action, i) {
+      var li = document.createElement("li");
+      li.textContent = "step" + (i + 1) + " " + action + " → Pendiente (dry-run aprobado)";
+      steps.appendChild(li);
+    });
+    document.getElementById("planNote").textContent =
+      "Plan aprobado por dry-run: " + actions.join(" → ") +
+      " | Pipeline: " + plan.pipeline_profile + " | Target: " + plan.target +
+      " | Scope: " + plan.scope + ". Comando exacto en la consola; confirma para ejecutar.";
+    document.getElementById("mapHeader").textContent =
+      "Plan aprobado (dry-run) | Target: " + plan.target + " | Sin ejecutar todavía";
+  }
+
+  function renderTasks(sessionDir, target, statusText, note) {
+    var tbody = document.getElementById("tasksBody");
+    tbody.innerHTML = "";
+    var tr = document.createElement("tr");
+    [sessionDir || "—", target || "—", statusText, "—", "—", "—", note || ""].forEach(function (v) {
+      var td = document.createElement("td");
+      td.textContent = v;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+
+  function phaseActions() {
+    return PHASE_ACTIONS[state.phase] || [state.phase];
   }
 
   function startScan() {
-    if (state.checks >= state.totalChecks) {
-      log("[*] Scan already completed (25/25). Use New to reset the session.");
+    if (state.running) { log("[*] Ya hay una ejecución en curso."); return; }
+    if (!state.connected || !state.pentestxPresent) {
+      log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. No se simula nada.");
       return;
     }
-    if (state.running) { log("[*] Scan already running (" + state.checks + "/25)."); return; }
+    if (!state.config.authorization_reference) {
+      log("[!!] Falta la referencia de autorización escrita: ábrela en Config y guárdala antes de Start.");
+      document.getElementById("configDialog").showModal();
+      return;
+    }
+    var payload = {
+      target: state.config.target,
+      scope: state.config.scope,
+      actions: phaseActions(),
+      pipeline_profile: state.config.pipeline_profile,
+      authorization_reference: state.config.authorization_reference
+    };
+    log("[*] Dry-run: " + payload.actions.join(" ") + " sobre " + payload.target +
+        " (scope " + payload.scope + ", pipeline " + payload.pipeline_profile + ")…");
+    api("/api/plan", { method: "POST", body: payload }, 130000).then(function (plan) {
+      if (plan.exit_code !== 0) {
+        log("[!!] Dry-run rechazado por la CLI (exit " + plan.exit_code + "). No se ejecuta nada.");
+        logLines(plan.stdout);
+        logLines(plan.stderr);
+        return;
+      }
+      renderPlan({
+        target: payload.target, scope: payload.scope,
+        actions: payload.actions, pipeline_profile: payload.pipeline_profile,
+        command: plan.command, command_exact: plan.command_exact
+      });
+      log("[+] Dry-run OK. Comando exacto:");
+      log("    " + plan.command);
+      if (plan.manifest) {
+        log("[+] Manifiesto del dry-run: " + JSON.stringify(plan.manifest).slice(0, 500));
+      }
+      document.getElementById("confirmCommand").textContent = plan.command;
+      document.getElementById("confirmDialog").showModal();
+    }).catch(function (err) {
+      log("[!!] Dry-run rechazado: " + err.message + ". No se ejecuta nada.");
+    });
+  }
+
+  function doExecute() {
+    if (state.running) return;
     state.running = true;
-    stopTimer();
-    state.timer = setInterval(advance, 1500);
-    log("[+] Starting OWASP scan on srv-web-01:80 (local simulation, no network traffic) ..");
-    render();
+    renderBackend();
+    log("[+] Ejecutando el comando exacto del dry-run… (Pause para detener)");
+    api("/api/execute", {
+      method: "POST",
+      body: { confirm: true, authorization_reference: state.config.authorization_reference }
+    }, 620000).then(function (res) {
+      state.running = false;
+      renderBackend();
+      logLines(res.stdout);
+      logLines(res.stderr);
+      log("[+] Ejecución terminada: exit " + res.exit_code +
+          (res.session_dir ? (" | sesión " + res.session_dir) : " | sin sesión nueva"));
+      if (res.session_dir) {
+        state.sessionDir = res.session_dir;
+        document.getElementById("statusSession").textContent = "Session: " + res.session_dir;
+        document.getElementById("mapHeader").textContent =
+          "Session: " + res.session_dir + " | Target: " + state.config.target;
+        renderTasks(res.session_dir, state.config.target,
+          res.exit_code === 0 ? "Completed" : "Failed",
+          "Ver manifiesto y findings en el Inspector.");
+        loadFindings(res.session_dir);
+      } else {
+        renderTasks(null, state.config.target, "Failed", "La CLI no creó sesión.");
+      }
+    }).catch(function (err) {
+      state.running = false;
+      renderBackend();
+      log("[!!] Ejecución fallida o detenida: " + err.message);
+    });
   }
 
   function pauseScan() {
-    if (!state.running) { log("[*] Scan is not running; nothing to pause."); return; }
-    state.running = false;
-    stopTimer();
-    log("[*] Scan paused at check " + state.checks + "/25 (" + pct() + "%).");
-    render();
+    if (!state.running) { log("[*] No hay ejecución en curso; nada que pausar."); return; }
+    api("/api/stop", { method: "POST", body: {} }, 15000).then(function (res) {
+      log(res.stopped ? "[*] Proceso detenido (Pause)." : "[*] No había proceso que detener.");
+    }).catch(function (err) {
+      log("[!!] No se pudo detener el proceso: " + err.message);
+    });
   }
 
   function resetSession() {
-    state.running = false;
-    stopTimer();
-    state.checks = 12;
-    state.phase = "owasp_web";
-    selectPhase("owasp_web");
-    render();
-    log("[+] New session initialized: SA-2024-011 (local view reset to 12/25 checks, 48%).");
+    state.plan = null;
+    state.sessionDir = null;
+    state.config = {
+      target: "contaia.site", scope: "passive",
+      pipeline_profile: "with_owasp", authorization_reference: ""
+    };
+    saveConfig();
+    fillConfigForm();
+    document.getElementById("pipelineSteps").innerHTML =
+      "<li>Sin plan — pulsa Start para generar un dry-run.</li>";
+    document.getElementById("planNote").textContent =
+      "Sin plan — el plan real aparece aquí tras el dry-run.";
+    document.getElementById("mapHeader").textContent =
+      "Sin sesión | Map View • Sin hosts • Arranca el backend y pulsa Start";
+    document.getElementById("statusSession").textContent = "Session: — | Sin sesión";
+    renderTasks(null, null, "—", "Sin sesión — no hay tareas todavía.");
+    renderFindings([]);
+    log("[+] Configuración restablecida a los valores por defecto (contaia.site, passive, with_owasp).");
   }
 
   function download(filename, text, type) {
@@ -121,50 +334,61 @@
   }
 
   function exportReport() {
-    var report = {
-      session: "SA-2024-011",
-      scope: "10.10.50.0/24",
-      user: "sec-analyst",
-      version: "v1.2.0-design1",
-      phase: state.phase,
-      owasp_checks: state.checks + "/25",
-      progress_pct: pct(),
-      hosts: ["srv-web-01 (10.10.50.10) http:80", "srv-api-02 (10.10.50.11) api:443",
-              "db-01 (10.10.50.20) postgres:5432", "fw-gateway (10.10.50.1) firewall"],
-      findings_shown: [
-        "[MED] Outdated Server Header — srv-web-01:80 — CWE-1008",
-        "[LOW] TLS 1.0 Supported — srv-api-02:443 — CWE-326",
-        "[INFO] Open DB Port Detected — db-01:5432 — Internal only"
-      ],
-      note: "Local simulation only. No network traffic was generated by this page."
-    };
-    download("pent3stx-SA-2024-011-report.json", JSON.stringify(report, null, 2));
-    log("[+] Report exported: pent3stx-SA-2024-011-report.json (local download).");
+    if (!state.connected) { log("[!!] Sin backend: no hay nada real que exportar."); return; }
+    api("/api/sessions").then(function (data) {
+      var sessions = data.sessions || [];
+      if (!sessions.length) { log("[*] No hay sesiones reales todavía; nada que exportar."); return; }
+      var latest = sessions[0];
+      return api("/api/findings?session=" + encodeURIComponent(latest.name)).then(function (f) {
+        return { session: latest, findings: f.findings || [] };
+      }).catch(function () {
+        return { session: latest, findings: [] };
+      });
+    }).then(function (result) {
+      if (!result) return;
+      var report = {
+        session: result.session.name,
+        manifest: result.session.manifest,
+        target: state.config.target,
+        scope: state.config.scope,
+        pipeline_profile: state.config.pipeline_profile,
+        plan_command: state.plan ? state.plan.command : null,
+        findings: result.findings
+      };
+      download("pent3stx-" + result.session.name + "-report.json", JSON.stringify(report, null, 2));
+      log("[+] Reporte real exportado: sesión " + result.session.name + ", " + result.findings.length + " findings.");
+    }).catch(function (err) {
+      log("[!!] Export fallido: " + err.message);
+    });
   }
 
-  function saveState() {
+  function saveConfig() {
     try {
-      localStorage.setItem("pent3stx-design1", JSON.stringify({
-        checks: state.checks, phase: state.phase, savedAt: new Date().toISOString()
-      }));
-      state.savedAt = new Date().toISOString();
-      log("[+] State saved in this browser (checks " + state.checks + "/25, phase " + state.phase + ").");
+      localStorage.setItem("pent3stx-config", JSON.stringify(state.config));
+      log("[+] Configuración guardada en este navegador (target, scope, pipeline).");
     } catch (e) {
-      log("[!!] Could not save state in this browser: " + e.message);
+      log("[!!] No se pudo guardar la configuración: " + e.message);
     }
   }
 
-  function loadSavedState() {
+  function loadSavedConfig() {
     try {
-      var raw = localStorage.getItem("pent3stx-design1");
+      var raw = localStorage.getItem("pent3stx-config");
       if (!raw) return;
-      var s = JSON.parse(raw);
-      if (typeof s.checks === "number" && s.checks >= 0 && s.checks <= 25) {
-        state.checks = s.checks;
-        if (s.phase) selectPhase(s.phase);
-        log("[*] Restored saved state from this browser (checks " + s.checks + "/25).");
-      }
-    } catch (e) { /* keep the design defaults */ }
+      var c = JSON.parse(raw);
+      if (typeof c.target === "string" && c.target) state.config.target = c.target;
+      if (c.scope === "passive" || c.scope === "active") state.config.scope = c.scope;
+      if (typeof c.pipeline_profile === "string") state.config.pipeline_profile = c.pipeline_profile;
+      if (typeof c.authorization_reference === "string") state.config.authorization_reference = c.authorization_reference;
+      log("[*] Configuración restaurada de este navegador.");
+    } catch (e) { /* keep defaults */ }
+  }
+
+  function fillConfigForm() {
+    document.getElementById("cfgTarget").value = state.config.target;
+    document.getElementById("cfgScope").value = state.config.scope;
+    document.getElementById("cfgPipeline").value = state.config.pipeline_profile;
+    document.getElementById("cfgAuth").value = state.config.authorization_reference;
   }
 
   function selectPhase(phase) {
@@ -172,11 +396,10 @@
     document.querySelectorAll(".phase").forEach(function (el) {
       el.classList.toggle("selected", el.getAttribute("data-phase") === phase);
     });
-    var label = phase.replace(/-/g, " ");
-    document.getElementById("planView").querySelector(".plan-note").textContent =
-      "Selected phase: " + label + ". Plan: passive → active → OWASP Web Scan → correlation → report. " +
-      "Approved scope: 10.10.50.0/24. No step runs network traffic from this page; Start advances the local simulation only.";
-    log("[*] Phase selected: " + phase + " (local view only; nothing executed).");
+    document.getElementById("planNote").textContent =
+      "Fase seleccionada: " + phase + " (acciones: " + phaseActions().join(", ") + "). " +
+      "Pulsa Start para el dry-run real con esa fase.";
+    log("[*] Fase seleccionada: " + phase + ".");
   }
 
   function openFilePicker(mode) {
@@ -188,11 +411,11 @@
       reader.onload = function () {
         var text = String(reader.result || "");
         if (text.length > 1024 * 1024) {
-          log("[!!] " + mode + ": file too large (over 1 MiB): " + f.name);
+          log("[!!] " + mode + ": archivo demasiado grande (más de 1 MiB): " + f.name);
           return;
         }
-        log("[+] " + mode + ": loaded local file as data (not executed): " + f.name +
-            " (" + f.size + " bytes, " + text.split(/\n/).length + " lines).");
+        log("[+] " + mode + ": archivo local cargado solo como datos (no ejecutado): " + f.name +
+            " (" + f.size + " bytes, " + text.split(/\n/).length + " líneas).");
       };
       reader.readAsText(f);
     };
@@ -207,7 +430,7 @@
     });
     document.getElementById("mapView").hidden = which !== "map";
     document.getElementById("planView").hidden = which !== "plan";
-    log("[*] Center view: " + (which === "map" ? "Session Map" : "Plan Overview") + ".");
+    log("[*] Vista central: " + (which === "map" ? "Session Map" : "Plan Overview") + ".");
   }
 
   function showInspector(which) {
@@ -226,23 +449,25 @@
     "open": function () { openFilePicker("Open"); },
     "import": function () { openFilePicker("Import"); },
     "start": startScan,
-    "scan": function () { log("[*] Scan requested for phase " + state.phase + "."); startScan(); },
+    "scan": startScan,
     "pause": pauseScan,
     "export": exportReport,
-    "save": saveState,
-    "config": function () { document.getElementById("configDialog").showModal(); },
+    "save": saveConfig,
+    "config": function () { fillConfigForm(); document.getElementById("configDialog").showModal(); },
     "about": function () { document.getElementById("aboutDialog").showModal(); },
     "authorized-note": function () {
-      log("[!!] Note: This is an authorized assessment. Do not perform actions outside approved scope (10.10.50.0/24).");
+      log("[!!] Nota: evaluación autorizada únicamente. Solo contaia.site y 127.0.0.1, con autorización escrita.");
     },
     "copy-plan": function () {
-      var text = "Pent3stX SA-2024-011 — passive → active → OWASP Web Scan → correlation → report. Scope 10.10.50.0/24. Checks " + state.checks + "/25.";
+      var text = state.plan
+        ? "Pent3stX — " + state.plan.command
+        : "Pent3stX — sin plan todavía. Pulsa Start para el dry-run.";
       if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(function () { log("[+] Plan summary copied to clipboard."); });
-      } else { log("[*] Plan summary: " + text); }
+        navigator.clipboard.writeText(text).then(function () { log("[+] Plan copiado al portapapeles."); });
+      } else { log("[*] Plan: " + text); }
     },
     "clear-console": function () {
-      consoleBody.textContent = stamp() + "[*] Console cleared (local view).";
+      consoleBody.textContent = stamp() + "[*] Consola limpiada.";
     },
     "toggle-console": function () {
       document.getElementById("consolePanel").classList.toggle("collapsed");
@@ -255,9 +480,14 @@
       document.getElementById("phaseTree").classList.toggle("collapsed");
     },
     "analyze-ports": function () {
-      log("[*] Port analysis (local data only): 22, 80, 443, 5432 open on 10.10.50.10, .11, .20. No scan was run.");
+      if (!state.sessionDir) {
+        log("[*] Sin sesión real todavía: ejecuta un plan primero para analizar puertos de sus findings.");
+        return;
+      }
+      loadFindings(state.sessionDir);
+      log("[*] Puertos: revisa los findings reales de la sesión " + state.sessionDir + " (sin escaneo nuevo).");
     },
-    "plugins-none": function () { log("[*] Plugins: none loaded (read-only session)."); },
+    "plugins-none": function () { log("[*] Plugins: ninguno cargado."); },
     "show-plan": function () { showTab("plan"); },
     "show-findings": function () { showInspector("findings"); },
     "reset-layout": function () {
@@ -265,7 +495,7 @@
       document.getElementById("consolePanel").classList.remove("collapsed");
       document.getElementById("phaseTree").classList.remove("collapsed");
       showTab("map"); showInspector("pipeline");
-      log("[*] Layout reset to the Design Option 1 defaults.");
+      log("[*] Layout restablecido a los valores del diseño 1.");
     }
   };
 
@@ -278,7 +508,6 @@
     });
   });
 
-  // Menu dropdowns
   function closeMenus() {
     document.querySelectorAll(".menu.open").forEach(function (m) { m.classList.remove("open"); });
   }
@@ -293,12 +522,10 @@
   });
   document.addEventListener("click", closeMenus);
 
-  // Phase tree
   document.querySelectorAll(".phase").forEach(function (el) {
     el.addEventListener("click", function () { selectPhase(el.getAttribute("data-phase")); });
   });
 
-  // Center tabs + inspector tabs
   document.querySelectorAll(".center-tab").forEach(function (t) {
     t.addEventListener("click", function () { showTab(t.getAttribute("data-center-tab")); });
   });
@@ -306,36 +533,47 @@
     t.addEventListener("click", function () { showInspector(t.getAttribute("data-insp-tab")); });
   });
 
-  // Session map nodes
-  document.querySelectorAll(".node").forEach(function (n) {
-    n.addEventListener("click", function () {
-      log("[*] Host selected on map: " + n.getAttribute("data-host") + " (local view only).");
-    });
-  });
-
-  // Window controls (web page: no real OS window to minimize)
   document.querySelectorAll(".win-btn").forEach(function (b) {
     b.addEventListener("click", function () {
       var w = b.getAttribute("data-win");
-      if (w === "min") log("[*] Minimize is not available for a web page; the workbench stays open.");
+      if (w === "min") log("[*] Minimize no está disponible para una página web; el workbench sigue abierto.");
       if (w === "max") {
         if (document.fullscreenElement) document.exitFullscreen();
         else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-        log("[*] Fullscreen toggled.");
+        log("[*] Pantalla completa alternada.");
       }
-      if (w === "close") log("[*] Close is disabled in this read-only view; use the browser tab to leave.");
+      if (w === "close") log("[*] Close está deshabilitado en esta vista; usa la pestaña del navegador para salir.");
     });
   });
 
-  // Config toggles
   document.getElementById("optMotion").addEventListener("change", function (ev) {
     document.body.classList.toggle("reduced-motion", ev.target.checked);
-    log("[*] Reduced motion " + (ev.target.checked ? "enabled." : "disabled."));
+    log("[*] Reduced motion " + (ev.target.checked ? "activado." : "desactivado."));
   });
   document.getElementById("optConsole").addEventListener("change", function (ev) {
     document.getElementById("consolePanel").classList.toggle("collapsed", !ev.target.checked);
   });
 
-  loadSavedState();
-  render();
+  document.getElementById("configForm").addEventListener("submit", function () {
+    state.config.target = document.getElementById("cfgTarget").value.trim();
+    state.config.scope = document.getElementById("cfgScope").value;
+    state.config.pipeline_profile = document.getElementById("cfgPipeline").value;
+    state.config.authorization_reference = document.getElementById("cfgAuth").value.trim();
+    saveConfig();
+    log("[*] Configuración actualizada: " + state.config.target + ", " +
+        state.config.scope + ", " + state.config.pipeline_profile + ".");
+  });
+
+  document.getElementById("confirmDialog").addEventListener("close", function () {
+    if (document.getElementById("confirmDialog").returnValue === "confirm") {
+      doExecute();
+    } else {
+      log("[*] Ejecución cancelada por el usuario. El dry-run sigue aprobado para ese comando exacto.");
+    }
+  });
+
+  loadSavedConfig();
+  fillConfigForm();
+  renderBackend();
+  checkBackend();
 })();
