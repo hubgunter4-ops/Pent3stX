@@ -101,6 +101,54 @@ No hay dependencias: son tres archivos (`index.html`, `styles.css`,
    layout` (menú Window) devuelve el diseño a sus valores por
    defecto.
 
+## Instrucciones de uso
+
+1. **Abrir la interfaz:** haz doble clic en `web-ui/index.html` (o
+   arrástralo a una ventana del navegador). No necesita servidor ni
+   instalación.
+2. **Elegir fase:** en el árbol `OPERATIONS • PHASES` de la izquierda,
+   pulsa una fase (por ejemplo `owasp_web`, seleccionada por
+   defecto). Queda resaltada en azul y la consola anota la selección.
+3. **Revisar Session Map y Plan Overview:** en el centro, la pestaña
+   `Session Map` muestra la sesión `SA-2024-011` con los 4 hosts
+   (`srv-web-01`, `srv-api-02`, `db-01` y `fw-gateway`) dentro del
+   ámbito autorizado. La pestaña `Plan Overview` muestra el plan
+   (passive → active → OWASP Web Scan → correlation → report) y la
+   fase seleccionada. Debajo del mapa está la tabla de tareas.
+4. **Pulsar Start para ejecutar:** pulsa `Start` (o `Scan`) en la
+   barra de herramientas. La simulación local del escaneo OWASP
+   avanza: el contador sube de 12/25 en adelante y la consola añade
+   una línea por cada check. No se contacta ningún host.
+5. **Pause para pausar:** pulsa `Pause` para detener el avance en
+   el check actual. Vuelve a pulsar `Start` para reanudarlo.
+6. **Ver el progreso en el Inspector:** a la derecha, en `Pipeline
+   Status`, el paso 3 `Web Scan` pasa de Running (48 %) a Running
+   con el porcentaje subiendo, y `OWASP ZAP` pasa de 12/25 a 25/25
+   checks. Al llegar a 25/25, el escaneo pasa a Completed y
+   Correlation pasa a Running.
+7. **Seguir la consola verde:** la `TERMINAL CONSOLE` fija de abajo
+   muestra en verde cada check que avanza y, al final, la línea
+   `[+] OWASP scan completed: 25/25 checks.`
+8. **Revisar Findings:** en el Inspector, pestaña `Findings`,
+   están los 7 findings (se muestran los 3 del diseño: [MED]
+   Outdated Server Header, [LOW] TLS 1.0 Supported e [INFO] Open
+   DB Port Detected).
+9. **Usar Save / Open / Export / Import:** `Save` guarda el estado
+   (checks y fase) en el navegador; `Open` e `Import` cargan un
+   archivo local (hasta 1 MiB) solo como datos, sin ejecutarlo;
+   `Export` descarga el reporte `pent3stx-SA-2024-011-report.json`.
+
+> **Advertencia — uso solo autorizado y sin tráfico real:** esta
+> página es de solo lectura y no genera tráfico de red ni ejecuta
+> escaneos reales. Úsala solo sobre activos propios o cubiertos por
+> autorización escrita y reglas de compromiso vigentes.
+
+![Ejecución de Pent3stX](docs/ejecucion.gif)
+
+GIF de ejecución: `docs/ejecucion.gif` (pulsar Start, la barra de
+progreso avanzando, las líneas de consola en verde y el estado
+cambiando a Completed).
+
 ## Qué NO hace esta página
 
 - No escanea, no resuelve nombres, no abre puertos y no envía nada
@@ -119,3 +167,5 @@ No hay dependencias: son tres archivos (`index.html`, `styles.css`,
 - `web-ui/app.js` — comportamiento local (simulación, menús,
   pestañas, consola, guardar/exportar).
 - `web-ui/README.md` — esta guía.
+- `web-ui/docs/ejecucion.gif` — GIF animado de la ejecución (Start,
+  progreso 48 % → 100 %, consola verde y estado Completed).
