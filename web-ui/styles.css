@@ -200,6 +200,11 @@ body.reduced-motion .node-hub { animation: none; }
 
 /* Dialogs */
 .dialog { background: #2b2b2b; color: #eee; border: 1px solid #777; max-width: 480px; padding: 16px 20px; }
+.dialog-wide { max-width: 720px; }
+.msf-results { list-style: none; padding: 0; margin: 10px 0; max-height: 180px; overflow: auto; background: #1b1b1b; border: 1px solid #555; }
+.msf-results li { padding: 4px 6px; border-bottom: 1px solid #333; font-size: 13px; }
+.msf-results li button { background: none; border: none; color: #9fd0ff; text-align: left; width: 100%; padding: 4px 2px; cursor: pointer; font-size: 13px; }
+.msf-results li button:hover { color: #fff; text-decoration: underline; }
 .dialog h2 { margin-top: 0; }
 .dialog label { display: block; margin: 10px 0; }
 .dialog-btn { background: #2f6fb2; border: 1px solid #7fb2e5; color: #fff; padding: 7px 16px; border-radius: 4px; }

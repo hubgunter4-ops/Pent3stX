@@ -137,6 +137,26 @@ Start queda deshabilitado. No hay modo simulación.
   Ejecuta el plan paso a paso (dry-run por paso, precondiciones,
   `replan`) y guarda la evidencia en
   `workspace/engine_runs/<timestamp>/plan.json`.
+- `GET /api/msf/status` y `POST /api/msf/status` — conexión con
+  el `msfmcpd` local (127.0.0.1:3000): `{connected,
+  dangerous_actions, tools, handlers}`.
+- `POST /api/msf/search`, `GET /api/msf/modules?type=&q=`,
+  `POST /api/msf/module-info`, `GET /api/msf/hosts|services|vulns`,
+  `GET /api/msf/sessions`, `GET /api/msf/result?uuid=` — lectura
+  de Metasploit sin casilla (ver `web-ui/msf/README.md`).
+- `POST /api/msf/plan` — `{type, name, action: check|run,
+  options}`. Valida el módulo y sus opciones y devuelve el plan
+  exacto; con payload reverse incluye el handler
+  `exploit/multi/handler` que se arrancará antes. No ejecuta nada.
+- `POST /api/msf/check` y `POST /api/msf/run` — `{confirm: true,
+  confirm_written_authorization}`. Exigen plan aprobado y la
+  casilla marcada; sin casilla, 409; con las acciones peligrosas
+  de `msfmcpd` desactivadas, 409 con el mensaje de
+  `--enable-dangerous-actions`. Evidencia en
+  `workspace/msf_runs/<timestamp>/manifest.json`.
+- `POST /api/msf/session/stop` — `{confirm: true,
+  confirm_written_authorization, session_id}`. Detiene una
+  sesión; también exige la casilla.
 
 ## Motor de planificación por reglas
 
@@ -166,6 +186,23 @@ exactos → confirmación → ejecución, con la salida real en la
 consola verde. Extrae solo `database()` y `username`; **el hash de
 password quedó fuera a propósito**. No toca `pentestx.py`: es un
 script aparte con sus propios guardrails.
+
+## Panel de Metasploit (local)
+
+Menú **Tools → Metasploit (local)**: panel completo con exploits
+sobre el MCP oficial de Metasploit (`msfmcpd`), en
+`web-ui/msf/msf_client.py` y documentado en
+`web-ui/msf/README.md`. Necesita `msfmcpd` corriendo en tu PC
+(por defecto en `http://127.0.0.1:3000/`; arranca con
+`./msfmcpd --mcp-transport http --enable-dangerous-actions`).
+Lectura sin casilla (buscar módulos, ver sesiones); check, run y
+detener sesiones solo con la casilla de autorización marcada.
+Targets solo `contaia.site` y `127.0.0.1`; `LHOST` solo
+`127.0.0.1`. Un payload reverse arranca antes su handler
+`exploit/multi/handler` por la misma conexión MCP (el handler es
+un job del framework, no hace falta una segunda conexión) y la
+sesión entrante se vincula a esa ejecución y aparece en la tabla
+de sesiones. Evidencia en `workspace/msf_runs/<timestamp>/`.
 
 ## Qué se ve en cada zona
 

@@ -47,6 +47,7 @@
         <button type="button" data-action="scan">Scan (selected phase)</button>
         <button type="button" data-action="analyze-ports">Analyze ports</button>
         <button type="button" data-action="moodle-sqli">Moodle SQLi (local)</button>
+        <button type="button" data-action="msf">Metasploit (local)</button>
       </div>
     </div>
     <div class="menu" data-menu="assessments"><button type="button" class="menu-btn">Assessments</button>
@@ -354,6 +355,58 @@
     <p>Design Option 1 — Ettercap classic style. Interfaz funcional con backend local (127.0.0.1:8765) que ejecuta pentestx.py con dry-run previo y autorización escrita. v2.0-functional.</p>
     <p><strong>Authorized use only.</strong> Solo targets permitidos (contaia.site, 127.0.0.1) y solo con autorización escrita.</p>
     <button type="submit" class="dialog-btn">Close</button>
+  </form>
+</dialog>
+
+<!-- Metasploit (local) dialog -->
+<dialog id="msfDialog" class="dialog dialog-wide">
+  <form method="dialog" id="msfForm">
+    <h2>Metasploit (local) — msfmcpd</h2>
+    <p class="muted">Panel del MCP oficial de Metasploit (msfmcpd). Lectura sin casilla; verificar y ejecutar solo con autorización escrita. Targets solo contaia.site y 127.0.0.1; LHOST solo 127.0.0.1. Un payload reverse arranca antes su handler exploit/multi/handler por la misma conexión MCP.</p>
+    <p id="msfStatusLine" class="muted">Metasploit no conectado.</p>
+    <label>Token Bearer de msfmcpd (opcional; también vale MSF_MCP_AUTH_TOKEN)
+      <input type="password" id="msfToken" autocomplete="off" placeholder="token de msfmcpd, solo en memoria">
+    </label>
+    <label>Buscar módulos
+      <input type="text" id="msfQuery" placeholder="p. ej. smb, CVE-2017-0144, ms17_010">
+    </label>
+    <label>Tipo
+      <select id="msfType">
+        <option value="">todos</option>
+        <option value="exploit" selected>exploit</option>
+        <option value="auxiliary">auxiliary</option>
+        <option value="post">post</option>
+        <option value="payload">payload</option>
+      </select>
+    </label>
+    <button type="button" class="dialog-btn" id="msfSearchBtn">Buscar</button>
+    <button type="button" class="dialog-btn" id="msfRefreshSessionsBtn">Actualizar sesiones</button>
+    <ul id="msfResults" class="msf-results"><li>Sin búsqueda todavía.</li></ul>
+    <div id="msfDetail" hidden>
+      <h3 id="msfDetailTitle"></h3>
+      <p id="msfDetailDesc" class="muted"></p>
+      <div id="msfOptions"></div>
+      <p class="muted" id="msfReverseNote" hidden>Payload reverse: antes del exploit se arranca el handler exploit/multi/handler (LHOST 127.0.0.1) por la misma conexión MCP y la sesión entrante se vincula a esta ejecución.</p>
+      <button type="button" class="dialog-btn" id="msfCheckBtn">Verificar (check)</button>
+      <button type="button" class="dialog-btn" id="msfRunBtn">Ejecutar</button>
+    </div>
+    <h3>Sesiones</h3>
+    <ul id="msfSessions" class="msf-results"><li>Sin sesiones — actualiza la lista.</li></ul>
+    <p class="muted">El token no se guarda en el navegador ni en disco. Sin conexión con msfmcpd, la búsqueda y la ejecución quedan deshabilitadas.</p>
+    <button type="submit" class="dialog-btn" value="cancel" formnovalidate>Cerrar</button>
+  </form>
+</dialog>
+
+<!-- Metasploit confirm dialog -->
+<dialog id="msfConfirmDialog" class="dialog">
+  <form method="dialog" id="msfConfirmForm">
+    <h2>Confirmar Metasploit</h2>
+    <p>Este es el plan exacto aprobado. Solo se ejecutará esto, sin cambios:</p>
+    <pre id="msfConfirmText" class="confirm-command"></pre>
+    <p class="muted">Con payload reverse, el handler exploit/multi/handler se arranca antes por la misma conexión MCP. El handler sigue escuchando después de la ejecución; para detenerlo usa msfconsole (jobs -K). El panel detiene las sesiones desde la tabla.</p>
+    <label><input type="checkbox" id="msfConfirmAuth"> Confirmo que tengo autorización escrita para este alcance</label>
+    <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
+    <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
 </dialog>
 

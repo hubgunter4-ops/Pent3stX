@@ -30,6 +30,12 @@
     sessionDir: null,
     moodleRequest: null,
     enginePlan: null,
+    msfPlan: null,
+    msfAction: null,
+    msfPendingStop: null,
+    msfConnected: false,
+    msfDangerous: null,
+    msfSelected: null,
     config: {
       target: "contaia.site",
       scope: "passive",
@@ -99,6 +105,10 @@
     }
     setStartEnabled(state.connected && state.pentestxPresent && !state.running);
     document.querySelectorAll('[data-action="moodle-sqli"]').forEach(function (b) {
+      b.disabled = !(state.connected && !state.running);
+      b.classList.toggle("disabled", b.disabled);
+    });
+    document.querySelectorAll('[data-action="msf"]').forEach(function (b) {
       b.disabled = !(state.connected && !state.running);
       b.classList.toggle("disabled", b.disabled);
     });
@@ -398,6 +408,288 @@
       state.running = false;
       renderBackend();
       log("[!!] Moodle SQLi fallido o detenido: " + err.message);
+    });
+  }
+
+  /* -- Metasploit (local, web-ui/msf/msf_client.py) --------------- */
+  /* El token Bearer de msfmcpd vive solo en el campo del diálogo
+     (memoria); nunca se guarda en localStorage ni en disco. La
+     lectura (buscar módulos, sesiones) no necesita casilla; check,
+     run y detener sesiones exigen la casilla de autorización. Un
+     payload reverse arranca antes su handler exploit/multi/handler
+     por la misma conexión MCP; la sesión entrante se vincula a la
+     ejecución y aparece en la tabla de sesiones. */
+
+  function msfToken() {
+    var value = document.getElementById("msfToken").value;
+    return value ? value : null;
+  }
+
+  function msfRefreshStatus() {
+    return api("/api/msf/status", {
+      method: "POST", body: { mcp_token: msfToken() }
+    }, 10000).then(function (data) {
+      state.msfConnected = !!data.connected;
+      state.msfDangerous = data.dangerous_actions;
+      var line = document.getElementById("msfStatusLine");
+      if (!data.connected) {
+        line.textContent = "Metasploit no conectado — arranca msfmcpd / msfrpcd en 127.0.0.1. " + (data.error || "");
+        log("[!!] Metasploit no conectado: " + (data.error || ""));
+      } else {
+        line.textContent = "Metasploit conectado (" + (data.url || "") + ") — acciones peligrosas: " +
+          (data.dangerous_actions === true ? "ACTIVADAS" :
+           data.dangerous_actions === false ? "desactivadas (arranca msfmcpd con --enable-dangerous-actions para ejecutar)" : "desconocido") +
+          ((data.handlers || []).length ? " — handlers activos: " + data.handlers.length : "");
+        log("[+] Metasploit conectado — acciones peligrosas: " +
+          (data.dangerous_actions === true ? "activadas" : "desactivadas"));
+      }
+      document.getElementById("msfSearchBtn").disabled = !data.connected;
+      document.getElementById("msfRefreshSessionsBtn").disabled = !data.connected;
+      return data;
+    }).catch(function (err) {
+      state.msfConnected = false;
+      document.getElementById("msfStatusLine").textContent =
+        "Metasploit no conectado — " + err.message;
+      log("[!!] Estado de Metasploit: " + err.message);
+      return null;
+    });
+  }
+
+  function msfOpen() {
+    document.getElementById("msfToken").value = "";
+    document.getElementById("msfQuery").value = "";
+    document.getElementById("msfResults").innerHTML = "<li>Sin búsqueda todavía.</li>";
+    document.getElementById("msfDetail").hidden = true;
+    document.getElementById("msfSessions").innerHTML = "<li>Sin sesiones — actualiza la lista.</li>";
+    state.msfSelected = null;
+    state.msfPlan = null;
+    document.getElementById("msfDialog").showModal();
+    msfRefreshStatus().then(function () { msfLoadSessions(); });
+  }
+
+  function msfSearch() {
+    if (!state.msfConnected) {
+      log("[!!] Metasploit no conectado: busca después de arrancar msfmcpd.");
+      return;
+    }
+    var query = document.getElementById("msfQuery").value.trim();
+    var type = document.getElementById("msfType").value;
+    if (!query && !type) {
+      log("[!!] Escribe un término de búsqueda o elige un tipo de módulo.");
+      return;
+    }
+    log("[*] Buscando módulos Metasploit: " + (query || type) + "…");
+    api("/api/msf/search", {
+      method: "POST",
+      body: { query: query || type, limit: 100, mcp_token: msfToken() }
+    }, 30000).then(function (data) {
+      var modules = data.modules || [];
+      if (type) modules = modules.filter(function (m) { return m.type === type; });
+      var list = document.getElementById("msfResults");
+      if (!modules.length) {
+        list.innerHTML = "<li>Sin módulos para esa búsqueda.</li>";
+        log("[*] Sin módulos para esa búsqueda.");
+        return;
+      }
+      list.innerHTML = "";
+      modules.forEach(function (m) {
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = m.type + "/" + m.name +
+          (m.description ? " — " + m.description : "");
+        btn.addEventListener("click", function () {
+          msfSelectModule(m.type, m.name);
+        });
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+      log("[+] " + modules.length + " módulos encontrados.");
+    }).catch(function (err) {
+      log("[!!] Búsqueda Metasploit fallida: " + err.message);
+    });
+  }
+
+  function msfSelectModule(type, name) {
+    log("[*] Módulo seleccionado: " + type + "/" + name);
+    api("/api/msf/module-info", {
+      method: "POST",
+      body: { type: type, name: name, mcp_token: msfToken() }
+    }, 30000).then(function (data) {
+      var info = data.data || {};
+      state.msfSelected = { type: type, name: name, info: info };
+      document.getElementById("msfDetailTitle").textContent = type + "/" + name;
+      document.getElementById("msfDetailDesc").textContent = info.description || "";
+      msfRenderOptions(info.options || []);
+      document.getElementById("msfDetail").hidden = false;
+      document.getElementById("msfReverseNote").hidden = true;
+    }).catch(function (err) {
+      log("[!!] No se pudo cargar el módulo: " + err.message);
+    });
+  }
+
+  function msfRenderOptions(options) {
+    var box = document.getElementById("msfOptions");
+    box.innerHTML = "";
+    var list = Array.isArray(options) ? options : Object.keys(options || {}).map(function (k) {
+      var opt = options[k] || {};
+      return { name: k, required: !!opt.required, default: opt.default, description: opt.description || "" };
+    });
+    list.forEach(function (opt) {
+      var label = document.createElement("label");
+      label.textContent = opt.name + (opt.required ? " (obligatorio)" : "") +
+        (opt.description ? " — " + opt.description : "");
+      var input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("data-msf-option", opt.name);
+      var value = opt.default;
+      if (opt.name === "RHOSTS" && (value === "" || value === undefined || value === null)) value = state.config.target;
+      if (opt.name === "LHOST" && (value === "" || value === undefined || value === null)) value = "127.0.0.1";
+      if (value !== undefined && value !== null) input.value = String(value);
+      label.appendChild(input);
+      box.appendChild(label);
+    });
+    if (!list.length) {
+      box.innerHTML = "<p class=\"muted\">Este módulo no declara opciones.</p>";
+    }
+  }
+
+  function msfCollectOptions() {
+    var options = {};
+    document.querySelectorAll("[data-msf-option]").forEach(function (input) {
+      var value = input.value.trim();
+      if (value !== "") options[input.getAttribute("data-msf-option")] = value;
+    });
+    return options;
+  }
+
+  function msfPlan(action) {
+    if (!state.msfSelected) {
+      log("[!!] Elige primero un módulo de la lista.");
+      return;
+    }
+    var options = msfCollectOptions();
+    var payload = (options.PAYLOAD || "");
+    var reverse = payload.toLowerCase().indexOf("reverse") !== -1;
+    document.getElementById("msfReverseNote").hidden = !reverse;
+    log("[*] Plan Metasploit (" + action + "): " +
+      state.msfSelected.type + "/" + state.msfSelected.name +
+      (reverse ? " — payload reverse: se arrancará el handler multi/handler antes." : ""));
+    api("/api/msf/plan", {
+      method: "POST",
+      body: { type: state.msfSelected.type, name: state.msfSelected.name,
+              action: action, options: options, mcp_token: msfToken() }
+    }, 30000).then(function (data) {
+      state.msfPlan = data.plan;
+      state.msfAction = action;
+      state.msfPendingStop = null;
+      logLines(data.summary);
+      if (data.plan.reverse) {
+        log("[+] Payload reverse: el handler exploit/multi/handler se arrancará antes del exploit, por la misma conexión MCP.");
+      }
+      document.getElementById("msfConfirmText").textContent = data.summary;
+      document.getElementById("msfConfirmAuth").checked = false;
+      document.getElementById("msfConfirmDialog").showModal();
+    }).catch(function (err) {
+      log("[!!] Plan Metasploit rechazado: " + err.message + ". No se ejecuta nada.");
+    });
+  }
+
+  function msfExecute() {
+    if (state.msfPendingStop !== null) {
+      var sessionId = state.msfPendingStop;
+      state.msfPendingStop = null;
+      log("[+] Deteniendo sesión Metasploit " + sessionId + "…");
+      api("/api/msf/session/stop", {
+        method: "POST",
+        body: { confirm: true,
+                confirm_written_authorization:
+                  document.getElementById("msfConfirmAuth").checked,
+                session_id: sessionId, mcp_token: msfToken() }
+      }, 30000).then(function (res) {
+        log("[+] Sesión " + sessionId + " detenida. Evidencia: " + (res.evidence_dir || ""));
+        msfLoadSessions();
+      }).catch(function (err) {
+        log("[!!] No se pudo detener la sesión: " + err.message);
+      });
+      return;
+    }
+    var action = state.msfAction;
+    if (!action || !state.msfPlan) {
+      log("[!!] Sin plan Metasploit aprobado.");
+      return;
+    }
+    state.running = true;
+    renderBackend();
+    log("[+] Ejecutando módulo Metasploit (" + action + "): " +
+      state.msfPlan.type + "/" + state.msfPlan.name + "…");
+    api("/api/msf/" + action, {
+      method: "POST",
+      body: { confirm: true,
+              confirm_written_authorization:
+                document.getElementById("msfConfirmAuth").checked,
+              mcp_token: msfToken() }
+    }, 180000).then(function (res) {
+      state.running = false;
+      renderBackend();
+      log("[+] Metasploit (" + action + ") terminado: " + res.status +
+        " | run " + res.run_id);
+      if (res.handler) {
+        log("    handler: " + res.handler.name + " uuid " + (res.handler.uuid || "") +
+          " LHOST " + res.handler.LHOST + " LPORT " + res.handler.LPORT +
+          (res.handler.reused ? " (reutilizado)" : ""));
+      }
+      if (res.handler_error) log("[!!] El handler falló: " + res.handler_error);
+      if (res.result) logLines(JSON.stringify(res.result, null, 2));
+      if (res.sessions_linked && res.sessions_linked.length) {
+        log("[+] Sesiones vinculadas a esta ejecución: " + res.sessions_linked.join(", "));
+      }
+      if (res.evidence_dir) log("[+] Evidencia: " + res.evidence_dir);
+      msfLoadSessions();
+    }).catch(function (err) {
+      state.running = false;
+      renderBackend();
+      log("[!!] Metasploit fallido o detenido: " + err.message);
+    });
+  }
+
+  function msfLoadSessions() {
+    if (!state.msfConnected) return;
+    api("/api/msf/sessions", null, 15000).then(function (data) {
+      var sessions = data.sessions || {};
+      var list = document.getElementById("msfSessions");
+      var ids = Object.keys(sessions);
+      if (!ids.length) {
+        list.innerHTML = "<li>Sin sesiones activas.</li>";
+        return;
+      }
+      list.innerHTML = "";
+      ids.forEach(function (id) {
+        var s = sessions[id] || {};
+        var li = document.createElement("li");
+        var text = document.createElement("span");
+        text.textContent = "#" + id + " " + (s.type || "") +
+          " — " + (s.target_host || s.tunnel_peer || "") +
+          (s.via_exploit ? " — vía " + s.via_exploit : "") +
+          (s.via_payload ? " (" + s.via_payload + ")" : "");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Detener";
+        btn.addEventListener("click", function () {
+          state.msfPendingStop = parseInt(id, 10);
+          document.getElementById("msfConfirmText").textContent =
+            "Detener la sesión Metasploit #" + id + " (" + (s.type || "") +
+            (s.via_exploit ? ", vía " + s.via_exploit : "") + ").";
+          document.getElementById("msfConfirmAuth").checked = false;
+          document.getElementById("msfConfirmDialog").showModal();
+        });
+        li.appendChild(text);
+        li.appendChild(document.createTextNode(" "));
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+    }).catch(function (err) {
+      log("[!!] No se pudieron cargar las sesiones: " + err.message);
     });
   }
 
@@ -720,6 +1012,13 @@
       fillMoodleForm();
       document.getElementById("moodleDialog").showModal();
     },
+    "msf": function () {
+      if (!state.connected) {
+        log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. El panel Metasploit no se simula.");
+        return;
+      }
+      msfOpen();
+    },
     "plugins-none": function () { log("[*] Plugins: ninguno cargado."); },
     "show-plan": function () { showTab("plan"); },
     "show-findings": function () { showInspector("findings"); },
@@ -810,6 +1109,7 @@
   requireAuthCheckbox("confirmForm", "confirmAuth");
   requireAuthCheckbox("engineConfirmForm", "engineConfirmAuth");
   requireAuthCheckbox("moodleConfirmForm", "moodleConfirmAuth");
+  requireAuthCheckbox("msfConfirmForm", "msfConfirmAuth");
 
   document.getElementById("confirmDialog").addEventListener("close", function () {
     if (document.getElementById("confirmDialog").returnValue === "confirm") {
@@ -855,6 +1155,21 @@
       runMoodle();
     } else {
       log("[*] Sonda Moodle cancelada por el usuario. El dry-run sigue aprobado para ese comando exacto.");
+    }
+  });
+
+  document.getElementById("msfSearchBtn").addEventListener("click", msfSearch);
+  document.getElementById("msfRefreshSessionsBtn").addEventListener("click", function () {
+    msfRefreshStatus().then(function () { msfLoadSessions(); });
+  });
+  document.getElementById("msfCheckBtn").addEventListener("click", function () { msfPlan("check"); });
+  document.getElementById("msfRunBtn").addEventListener("click", function () { msfPlan("run"); });
+
+  document.getElementById("msfConfirmDialog").addEventListener("close", function () {
+    if (document.getElementById("msfConfirmDialog").returnValue === "confirm") {
+      msfExecute();
+    } else {
+      log("[*] Ejecución Metasploit cancelada por el usuario. El plan sigue aprobado para ese módulo exacto.");
     }
   });
 

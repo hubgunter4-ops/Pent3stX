@@ -191,7 +191,7 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 
 | Archivo o directorio | Propósito |
 |---|---|
-| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). En `web-ui/engine/` vive el motor de planificación por reglas (`engine.py`, `test_engine.py`, `DESIGN.md`). |
+| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). En `web-ui/engine/` vive el motor de planificación por reglas (`engine.py`, `test_engine.py`, `DESIGN.md`). En `web-ui/msf/` vive el panel de Metasploit (`msf_client.py`, `test_msf.py`, `README.md`): habla con el `msfmcpd` oficial en local, con la casilla de autorización como único control; un payload reverse arranca antes su handler `exploit/multi/handler` por la misma conexión MCP. |
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
 | `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |
