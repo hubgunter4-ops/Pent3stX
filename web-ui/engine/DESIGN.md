@@ -34,7 +34,7 @@ mapeo (sesiones/findings/herramientas) + goal + autorización
 | `target` | Usuario / Config | Sí: solo allowlist (`contaia.site`, `127.0.0.1`) |
 | `scope` | Usuario / Config | Sí: `passive` o `active` |
 | `pipeline_profile` | Derivado del goal (ver §4) | No: el goal fija el pipeline |
-| `authorization_reference` | Usuario | Sí, no vacía |
+| `confirm_written_authorization` | Usuario, casilla en el diálogo del motor | No: sin marcarla, el plan es una medición del scope ("sin autorización confirmada") |
 | `mapping` | El servidor, en el momento de planificar | No (se calcula): `tools_available` (`nmap`, `ffuf`, `sqlmap` por `shutil.which`), sesiones existentes en `workspace/pentestx_sessions/`, nº de findings |
 | Moodle (`base_url`, `sesskey`, `session_cookie`) | Usuario, solo para `moodle_sqli_confirm` | Solo para ese goal; vive solo en memoria del servidor |
 
@@ -46,7 +46,8 @@ mapeo (sesiones/findings/herramientas) + goal + autorización
   "target": "contaia.site",
   "scope": "passive",
   "pipeline_profile": "with_owasp",
-  "authorization_reference": "docs/AUTORIZACION-contaia.md",
+  "confirm_written_authorization": true,
+  "authorization_note": "autorización confirmada por casilla, sin referencia en la interfaz",
   "warnings": [],
   "steps": [
     {
@@ -63,7 +64,7 @@ mapeo (sesiones/findings/herramientas) + goal + autorización
         "--scope", "passive", "--action", "passive",
         "--pipeline-profile", "with_owasp",
         "--confirm-written-authorization",
-        "--authorization-reference", "docs/AUTORIZACION-contaia.md",
+        "--scope-file", "scope.yaml",
         "--dry-run"]
     }
   ]
@@ -201,8 +202,13 @@ guardado.
 
 - Allowlist de targets: solo `contaia.site` y `127.0.0.1`
   (y `http://127.0.0.1:8080/moodle` solo para los pasos Moodle).
-- Autorización escrita obligatoria; la ejecución exige el mismo plan
-  aprobado (hash del plan + misma referencia) y `confirm: true`.
+- Autorización escrita obligatoria: la ejecución exige la casilla
+  marcada ("Confirmo que tengo autorización escrita para este
+  alcance") en el diálogo de confirmación y el mismo plan aprobado
+  (hash del plan) con `confirm: true`. Los pasos pentestx exigen
+  además una referencia usable en `scope.yaml` (la CLI la toma de
+  ahí; sin ella, 409). La interfaz ya no escribe ninguna referencia:
+  ningún comando lleva `--authorization-reference`.
 - Acciones y pipelines solo de las allowlists existentes; sin RCE,
   sin escalada de privilegios, sin escritura en la BD, sin
   herramientas fuera de la allowlist (`nmap`, `ffuf`, `sqlmap` vía
@@ -221,13 +227,16 @@ guardado.
 - `GET /api/engine/goals` — los 3 goals con descripción, requisitos
   (herramientas, scope, sesión Moodle) y el esquema de pasos.
 - `POST /api/engine/plan` — `{goal, target, scope,
-  authorization_reference, moodle?: {base_url, sesskey,
+  confirm_written_authorization?, moodle?: {base_url, sesskey,
   session_cookie, extract?}}`. Valida y devuelve el plan generado
   **sin ejecutar nada**. La respuesta nunca trae la sesskey ni la
   cookie. El plan aprobado queda guardado en memoria del servidor.
+  Sin la casilla marcada, el plan dice "sin autorización confirmada"
+  y sirve como medición del scope.
 - `POST /api/engine/run` — `{confirm: true,
-  authorization_reference}`. Solo con un plan aprobado del comando
-  exacto y la misma referencia; si no, 409 sin ejecutar. Ejecuta el
+  confirm_written_authorization}`. Solo con un plan aprobado y la
+  casilla marcada; si no, 409 sin ejecutar. Los pasos pentestx
+  exigen además una referencia usable en `scope.yaml`. Ejecuta el
   plan paso a paso, verificando precondiciones y aplicando `replan`
   entre pasos. Guarda el plan y los resultados por paso en
   `workspace/engine_runs/<timestamp>/plan.json` (con los secretos
@@ -237,8 +246,9 @@ guardado.
 
 - Menú **Assessments → "Motor: generar plan"** (deshabilitado sin
   backend, sin simular nada).
-- Diálogo del motor: goal (select), target, scope y referencia de
-  autorización; los campos de Moodle (base-url, sesskey, cookie) solo
+- Diálogo del motor: goal (select), target, scope y la casilla de
+  autorización ("Confirmo que tengo autorización escrita para este
+  alcance"); los campos de Moodle (base-url, sesskey, cookie) solo
   se muestran si el goal es `moodle_sqli_confirm`.
 - El plan generado se muestra paso a paso en **Plan Overview** (lista
   de pasos con su estado) y en la consola verde; un diálogo de

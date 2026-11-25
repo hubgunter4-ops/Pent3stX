@@ -9,9 +9,11 @@ nada y lo dice.
 
 > **Uso autorizado únicamente.** Solo para activos propios o cubiertos
 > por autorización escrita y reglas de compromiso vigentes. La
-> ejecución real solo acepta los targets permitidos y exige la
-> referencia de autorización escrita, que se pide por ejecución
-> (nunca se guarda en el navegador).
+> ejecución real solo acepta los targets permitidos y exige confirmar
+> por casilla que existe autorización escrita para ese alcance; la
+> referencia que pide la CLI vive en `scope.yaml` (copia
+> `scope.example.yaml`) y nunca se escribe en la interfaz ni se
+> guarda en el navegador.
 
 ## Cómo arrancar
 
@@ -35,13 +37,15 @@ Start queda deshabilitado. No hay modo simulación.
 
 1. **Configura** en Config (o con los valores por defecto): target
    `contaia.site`, scope `passive` y pipeline `with_owasp`. La
-   referencia de autorización escrita ya no vive en Config ni se
-   guarda en el navegador: se pide por ejecución, en el diálogo de
-   confirmación, y sirve para delimitar y registrar el scope de esa
-   ejecución concreta. Sin ella, el dry-run funciona como medición
-   del scope y dice explícitamente "sin referencia de autorización",
-   pero la ejecución se rechaza (la CLI exige una referencia incluso
-   para el dry-run, salvo que `scope.yaml` ya tenga una).
+   autorización ya no es texto en ningún lado de la interfaz: es una
+   casilla por ejecución ("Confirmo que tengo autorización escrita
+   para este alcance") en el diálogo de confirmación. Sin marcarla,
+   el plan y el dry-run funcionan como medición del scope y dicen
+   explícitamente "sin autorización confirmada"; la ejecución se
+   rechaza. La referencia que exige la CLI vive en `scope.yaml`
+   (copia `scope.example.yaml`): la CLI la toma de ahí, y sin una
+   referencia usable ahí la ejecución también se rechaza con 409,
+   aunque la casilla esté marcada.
 2. **Elige fase** en el árbol `OPERATIONS • PHASES` (por ejemplo
    `owasp_web`, seleccionada por defecto). La fase define las acciones
    que se pedirán a la CLI.
@@ -67,16 +71,20 @@ Start queda deshabilitado. No hay modo simulación.
   rechazan redes privadas, `169.254.169.254`, `0.0.0.0/0`, redes más
   amplias que /24, multicast y cualquier otro loopback. El target se
   valida solo por sintaxis, sin resolverlo ni contactar la red.
-- **Autorización obligatoria:** sin `authorization_reference` no hay
-  dry-run ni ejecución.
+- **Autorización obligatoria:** la ejecución exige la casilla
+  marcada ("Confirmo que tengo autorización escrita para este
+  alcance") y una referencia usable en `scope.yaml` (la CLI la toma
+  de ahí; sin ella, 409 con un mensaje claro). El plan y el dry-run
+  sin casilla son solo una medición del scope y lo dicen
+  explícitamente ("sin autorización confirmada").
 - **Acciones y pipelines allowlisted:** acciones `passive`, `active`,
   `web`, `ports`, `vuln`, `owasp_web`, `vulnerability`, `correlate`,
   `report`, `correlated`; pipelines `standard`, `with_intrusive`,
   `with_owasp`, `full_web`. Las acciones activas y los pipelines con
   trabajo intrusivo exigen scope `active`.
 - **Dry-run exacto:** la ejecución solo se permite si antes hubo un
-  dry-run exitoso del comando exacto y con la misma referencia de
-  autorización; si no, el servidor responde 409 y no ejecuta nada.
+  dry-run exitoso del comando exacto y con la casilla marcada; si
+  no, el servidor responde 409 y no ejecuta nada.
 - **Sin shell:** la CLI se ejecuta con `subprocess` sin shell, con
   una lista fija de argumentos. No hay `--install-tools`, ni perfiles
   personalizados, ni comandos arbitrarios, ni subida de archivos al
@@ -87,17 +95,20 @@ Start queda deshabilitado. No hay modo simulación.
 
 - `GET /api/status` — `{backend: "ok", pentestx_present: true|false}`.
 - `POST /api/plan` — `{target, scope, actions[], pipeline_profile,
-  authorization_reference?}`. Devuelve el comando exacto, la salida,
-  el exit code, el manifiesto y la sesión del dry-run. Sin referencia,
-  el dry-run es una medición del scope: devuelve el plan con
-  `authorization_note: "sin referencia de autorización"` y
-  `needs_authorization: true` (la CLI exige una referencia incluso
-  para el dry-run, salvo que `scope.yaml` ya tenga una).
-- `POST /api/execute` — `{confirm: true, authorization_reference?}`.
-  Solo con dry-run previo del comando exacto; la ejecución exige una
-  referencia (si llega solo al confirmar, el servidor hace primero
-  el dry-run del comando exacto con ella). Sin referencia, 409 con
-  "se requiere referencia de autorización escrita para ejecutar".
+  confirm_written_authorization?}`. Devuelve el comando exacto, la
+  salida, el exit code, el manifiesto y la sesión del dry-run. Sin
+  la casilla marcada, el plan es una medición del scope: devuelve
+  el plan con `authorization_note: "sin autorización confirmada"` y
+  `needs_authorization: true` (la CLI exige una referencia en
+  `scope.yaml` incluso para el dry-run). El comando exacto lleva
+  siempre `--confirm-written-authorization` y nunca
+  `--authorization-reference`: la referencia vive en `scope.yaml`.
+- `POST /api/execute` — `{confirm: true,
+  confirm_written_authorization}`. Solo con dry-run previo del
+  comando exacto y la casilla marcada; sin casilla, 409. Además, sin
+  una referencia usable en `scope.yaml`, 409 con "marca la casilla y
+  pon la referencia en scope.yaml (copia scope.example.yaml) para
+  ejecutar; sin ella solo se genera el plan como medición del scope".
   Devuelve salida, exit code, sesión y manifiesto.
 - `POST /api/stop` — detiene el proceso en curso.
 - `GET /api/sessions` — sesiones reales de
@@ -106,26 +117,25 @@ Start queda deshabilitado. No hay modo simulación.
   máximo 200, tal cual vienen de `findings_db.json`.
 - `POST /api/tools/moodle-sqli/dry-run` — valida y devuelve los
   payloads exactos de la sonda Moodle SQLi sin enviar nada (la
-  referencia es opcional; sin ella el dry-run es una medición del
-  scope).
+  casilla no se necesita para el dry-run: es una medición).
 - `POST /api/tools/moodle-sqli/run` — `{confirm: true,
-  authorization_reference?}`. Solo con dry-run previo del comando
-  exacto; la ejecución exige una referencia (si llega solo al
-  confirmar, el servidor hace primero el dry-run con ella). Sin
-  referencia, 409 sin ejecutar.
+  confirm_written_authorization}`. Solo con dry-run previo del
+  comando exacto y la casilla marcada; sin casilla, 409 sin
+  ejecutar. La sonda no usa `scope.yaml`: solo necesita la casilla.
 - `GET /api/engine/goals` — los 3 goals del motor con descripción,
   requisitos y pasos.
 - `POST /api/engine/plan` — `{goal, target, scope,
-  authorization_reference?, moodle?}`. Genera el plan sin ejecutar
-  nada; lo deja aprobado en memoria del servidor. Sin referencia, el
-  plan dice "sin referencia de autorización" y sirve como medición
-  del scope.
+  confirm_written_authorization?, moodle?}`. Genera el plan sin
+  ejecutar nada; lo deja aprobado en memoria del servidor. Sin la
+  casilla marcada, el plan dice "sin autorización confirmada" y
+  sirve como medición del scope.
 - `POST /api/engine/run` — `{confirm: true,
-  authorization_reference?}`. La ejecución exige una referencia:
-  si el plan se generó sin ella, hay que aportarla aquí (el plan se
-  reconstruye con ella antes de correr); si no se aporta ninguna,
-  409. Ejecuta el plan paso a paso (dry-run por paso,
-  precondiciones, `replan`) y guarda la evidencia en
+  confirm_written_authorization}`. La ejecución exige la casilla
+  marcada; sin ella, 409. Los pasos pentestx exigen además una
+  referencia usable en `scope.yaml` (sin ella, 409 con el mensaje
+  de scope.yaml); los pasos Moodle solo necesitan la casilla.
+  Ejecuta el plan paso a paso (dry-run por paso, precondiciones,
+  `replan`) y guarda la evidencia en
   `workspace/engine_runs/<timestamp>/plan.json`.
 
 ## Motor de planificación por reglas
@@ -185,9 +195,10 @@ script aparte con sus propios guardrails.
 
 ## Qué NO hace
 
-- No ejecuta nada sin dry-run previo del comando exacto ni sin
-  referencia de autorización (que se aporta al confirmar, por
-  ejecución; nunca se guarda).
+- No ejecuta nada sin dry-run previo del comando exacto, sin la
+  casilla de autorización marcada ni sin una referencia usable en
+  `scope.yaml` (la casilla se marca al confirmar, por ejecución;
+  nunca se guarda nada en el navegador).
 - No acepta targets fuera de la allowlist ni acciones o pipelines
   fuera de las listas permitidas.
 - No instala herramientas ni ejecuta comandos arbitrarios.

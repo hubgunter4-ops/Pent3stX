@@ -22,7 +22,7 @@ def base_plan(**overrides):
         "scope": "passive",
         "actions": ["passive", "correlate", "report"],
         "pipeline_profile": "with_owasp",
-        "authorization_reference": "docs/AUTORIZACION-contaia.md",
+        "confirm_written_authorization": True,
     }
     plan.update(overrides)
     return plan
@@ -57,21 +57,24 @@ class TestValidatePlan(unittest.TestCase):
         self.assertEqual(plan["target"], "contaia.site")
         self.assertEqual(plan["pipeline_profile"], "with_owasp")
 
-    def test_authorization_optional_when_planning(self):
-        # Sin referencia el plan es una medición del scope: dice
-        # explícitamente "sin referencia de autorización" y nunca
-        # inventa una. La ejecución real sí la exige (la CLI la pide
-        # incluso para el dry-run, salvo que scope.yaml ya tenga una).
-        for ref in (None, "", "   "):
-            plan = server.validate_plan(base_plan(authorization_reference=ref))
-            self.assertIsNone(plan["authorization_reference"])
+    def test_authorization_is_a_checkbox(self):
+        # La autorización es una casilla por ejecución, no un texto:
+        # sin marcarla el plan es una medición del scope y dice
+        # explícitamente "sin autorización confirmada"; marcada,
+        # dice "autorización confirmada por casilla, sin referencia
+        # en la interfaz". Nunca se inventa una referencia.
+        for confirmed in (None, False):
+            plan = server.validate_plan(
+                base_plan(confirm_written_authorization=confirmed))
+            self.assertIs(plan["confirm_written_authorization"], False)
             self.assertEqual(plan["authorization_note"],
-                             "sin referencia de autorización")
+                             "sin autorización confirmada")
         plan = server.validate_plan(base_plan())
-        self.assertEqual(plan["authorization_reference"],
-                         "docs/AUTORIZACION-contaia.md")
-        self.assertIn("docs/AUTORIZACION-contaia.md",
-                      plan["authorization_note"])
+        self.assertIs(plan["confirm_written_authorization"], True)
+        self.assertEqual(
+            plan["authorization_note"],
+            "autorización confirmada por casilla, sin referencia "
+            "en la interfaz")
 
     def test_bad_action(self):
         with self.assertRaises(server.ValidationError):
@@ -107,7 +110,10 @@ class TestBuildCommand(unittest.TestCase):
         command = server.build_command(plan, dry_run=True)
         self.assertIn("--dry-run", command)
         self.assertIn("--confirm-written-authorization", command)
-        self.assertIn("--authorization-reference", command)
+        # La interfaz ya no escribe ninguna referencia: el comando
+        # nunca lleva --authorization-reference (la CLI la toma de
+        # scope.yaml) y nunca inventa una.
+        self.assertNotIn("--authorization-reference", command)
         self.assertIn("contaia.site", command)
         self.assertNotIn("--install-tools", command)
         # Fixed argument list, no shell metacharacters anywhere.
@@ -118,10 +124,13 @@ class TestBuildCommand(unittest.TestCase):
         self.assertEqual(execute, [a for a in command if a != "--dry-run"])
         self.assertNotEqual(server.command_hash(command), server.command_hash(execute))
 
-    def test_command_without_reference(self):
-        # Plan sin referencia (medición del scope): el comando no
-        # lleva --authorization-reference y nunca inventa una.
-        plan = server.validate_plan(base_plan(authorization_reference=None))
+    def test_command_without_checkbox(self):
+        # Plan sin la casilla marcada (medición del scope): el
+        # comando es el mismo (el flag --confirm-written-authorization
+        # es parte fija del comando que se previsualiza) y sigue sin
+        # llevar --authorization-reference.
+        plan = server.validate_plan(
+            base_plan(confirm_written_authorization=False))
         command = server.build_command(plan, dry_run=True)
         self.assertIn("--dry-run", command)
         self.assertIn("--confirm-written-authorization", command)
@@ -130,26 +139,44 @@ class TestBuildCommand(unittest.TestCase):
         execute = server.build_command(plan, dry_run=False)
         self.assertEqual(execute, [a for a in command if a != "--dry-run"])
 
-    def test_auth_reference_validation(self):
-        self.assertEqual(
-            server.validate_auth_reference("docs/AUTORIZACION-contaia.md"),
-            "docs/AUTORIZACION-contaia.md")
-        for bad in ("", "a; rm -rf /", "--flag", "../etc/passwd", "a b"):
-            with self.subTest(bad=bad):
-                self.assertRaises(server.ValidationError, server.validate_auth_reference, bad)
-
-    def test_auth_reference_optional(self):
-        # Ausente o vacía: None, sin inventar valor. Presente: token seguro.
-        self.assertIsNone(server.validate_auth_reference_optional(None))
-        self.assertIsNone(server.validate_auth_reference_optional(""))
-        self.assertIsNone(server.validate_auth_reference_optional("   "))
-        self.assertEqual(
-            server.validate_auth_reference_optional("docs/AUTORIZACION-contaia.md"),
-            "docs/AUTORIZACION-contaia.md")
-        for bad in ("a; rm -rf /", "--flag", "../etc/passwd", "a b"):
+    def test_confirmation_validation(self):
+        # La casilla es un booleano: ausente equivale a sin marcar.
+        self.assertIs(server.validate_confirmation(True), True)
+        self.assertIs(server.validate_confirmation(False), False)
+        self.assertIs(server.validate_confirmation(None), False)
+        for bad in ("sí", "yes", 1, 0, ["true"]):
             with self.subTest(bad=bad):
                 self.assertRaises(server.ValidationError,
-                                  server.validate_auth_reference_optional, bad)
+                                  server.validate_confirmation, bad)
+
+    def test_scope_yaml_reference_available(self):
+        # La CLI toma su referencia de scope.yaml: el servidor
+        # replica esa regla (misma lista de placeholders) para
+        # decidir si la ejecución real puede pasar.
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "no-existe.yaml"
+            self.assertFalse(
+                server.scope_yaml_reference_available(missing))
+            usable = Path(tmp) / "scope.yaml"
+            usable.write_text(
+                "targets: [contaia.site]\n"
+                "authorization_reference: docs/AUTORIZACION-contaia.md\n",
+                encoding="utf-8")
+            self.assertTrue(server.scope_yaml_reference_available(usable))
+            for placeholder in ("", "pendiente", "ejemplo", "example"):
+                usable.write_text(
+                    "authorization_reference: %s\n" % placeholder,
+                    encoding="utf-8")
+                self.assertFalse(
+                    server.scope_yaml_reference_available(usable))
+            usable.write_text("targets: [contaia.site]\n",
+                              encoding="utf-8")
+            self.assertFalse(server.scope_yaml_reference_available(usable))
+            usable.write_text("authorization_reference: [unclosed\n",
+                              encoding="utf-8")
+            self.assertFalse(server.scope_yaml_reference_available(usable))
 
 
 class TestSessionName(unittest.TestCase):

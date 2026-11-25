@@ -234,9 +234,7 @@
       <span><input type="checkbox" id="moodleExtractDb" checked> database()</span>
       <span><input type="checkbox" id="moodleExtractUser" checked> username (primer usuario)</span>
     </label>
-    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta)
-      <input type="text" id="moodleAuth" placeholder="docs/AUTORIZACION-moodle-local.md">
-    </label>
+    <label><input type="checkbox" id="moodleAuth"> Confirmo que tengo autorización escrita para este alcance</label>
     <p class="muted">Primero se hace dry-run y se muestran los payloads exactos en la consola; nada se envía hasta que confirmes. La cookie y el sesskey no se guardan en el navegador ni en disco.</p>
     <button type="submit" class="dialog-btn" value="dry-run">Ver dry-run</button>
     <button type="submit" class="dialog-btn" value="cancel" formnovalidate>Cancelar</button>
@@ -245,14 +243,12 @@
 
 <!-- Moodle SQLi confirm dialog -->
 <dialog id="moodleConfirmDialog" class="dialog">
-  <form method="dialog">
+  <form method="dialog" id="moodleConfirmForm">
     <h2>Confirmar Moodle SQLi</h2>
     <p>Estos son los payloads exactos del dry-run. Solo se ejecutará esta sonda, sin cambios:</p>
     <pre id="moodleConfirmPayloads" class="confirm-command"></pre>
     <p class="muted">La extracción es lenta (unos segundos por carácter acertado). Para detenerla, pulsa Pause.</p>
-    <label>Referencia de autorización escrita (opcional aquí si ya la pusiste arriba; obligatoria para ejecutar)
-      <input type="text" id="moodleConfirmAuth" placeholder="docs/AUTORIZACION-moodle-local.md">
-    </label>
+    <label><input type="checkbox" id="moodleConfirmAuth"> Confirmo que tengo autorización escrita para este alcance</label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -279,9 +275,7 @@
         <option value="active">active</option>
       </select>
     </label>
-    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta)
-      <input type="text" id="engineAuth" placeholder="docs/AUTORIZACION-contaia.md">
-    </label>
+    <label><input type="checkbox" id="engineAuth"> Confirmo que tengo autorización escrita para este alcance</label>
     <div id="engineMoodleFields" hidden>
       <label>Base URL (solo http://127.0.0.1:8080/moodle)
         <input type="text" id="engineMoodleBaseUrl" value="http://127.0.0.1:8080/moodle">
@@ -301,14 +295,12 @@
 
 <!-- Engine plan confirm dialog -->
 <dialog id="engineConfirmDialog" class="dialog">
-  <form method="dialog">
+  <form method="dialog" id="engineConfirmForm">
     <h2>Confirmar plan del motor</h2>
     <p>Estos son los pasos del plan aprobado. Solo se ejecutará este plan, sin cambios:</p>
     <pre id="engineConfirmPlan" class="confirm-command"></pre>
     <p class="muted">Cada paso hace su propio dry-run antes de ejecutarse. Para detenerlo, pulsa Pause.</p>
-    <label>Referencia de autorización escrita (opcional aquí si ya la pusiste al generar el plan; obligatoria para ejecutar)
-      <input type="text" id="engineConfirmAuth" placeholder="docs/AUTORIZACION-contaia.md">
-    </label>
+    <label><input type="checkbox" id="engineConfirmAuth"> Confirmo que tengo autorización escrita para este alcance</label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar plan</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -316,14 +308,12 @@
 
 <!-- Confirm execution dialog -->
 <dialog id="confirmDialog" class="dialog">
-  <form method="dialog">
+  <form method="dialog" id="confirmForm">
     <h2>Confirmar ejecución</h2>
     <p>Este es el comando exacto aprobado por el dry-run. Solo se ejecutará este comando, sin cambios:</p>
     <pre id="confirmCommand" class="confirm-command"></pre>
-    <p class="muted">La ejecución usa solo pipelines controlados y el alcance permitido. Para detenerla, pulsa Pause.</p>
-    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta — obligatoria para ejecutar)
-      <input type="text" id="confirmAuth" placeholder="docs/AUTORIZACION-contaia.md">
-    </label>
+    <p class="muted">La ejecución usa solo pipelines controlados y el alcance permitido. Para detenerla, pulsa Pause. La referencia de autorización que exige la CLI vive en scope.yaml (copia scope.example.yaml); sin ella, la ejecución se rechaza.</p>
+    <label><input type="checkbox" id="confirmAuth"> Confirmo que tengo autorización escrita para este alcance</label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -352,7 +342,7 @@
     </label>
     <label><input type="checkbox" id="optMotion"> Reduce motion (disable scanline / pulse animations)</label>
     <label><input type="checkbox" id="optConsole" checked> Keep terminal console fixed at the bottom</label>
-    <p class="muted">El servidor valida target, scope y pipeline. La referencia de autorización ya no vive aquí: se pide por ejecución, en el diálogo de confirmación, y sirve para delimitar y registrar el scope de esa ejecución concreta. Sin backend, Start no hace nada.</p>
+    <p class="muted">El servidor valida target, scope y pipeline. La autorización ya no es texto: se confirma por casilla en el diálogo de confirmación de cada ejecución, y la referencia que exige la CLI vive en scope.yaml (copia scope.example.yaml). Sin backend, Start no hace nada.</p>
     <button type="submit" class="dialog-btn">Guardar y cerrar</button>
   </form>
 </dialog>

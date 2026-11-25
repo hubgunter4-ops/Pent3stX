@@ -19,12 +19,13 @@ Guardrails (ver DESIGN.md §7):
 * acciones y pipelines solo de las allowlists existentes;
 * sin RCE, sin escalada, sin escritura en la BD, sin herramientas
   fuera de la allowlist;
-* la referencia de autorización es opcional al planificar: sirve
-  para delimitar/registrar el scope de una ejecución concreta y
-  nunca se inventa. Un plan sin referencia dice explícitamente
-  "sin referencia de autorización"; la ejecución real sí la exige
-  (la CLI la pide incluso para el dry-run, salvo que scope.yaml
-  ya tenga una);
+* la autorización es una casilla por ejecución
+  (``confirm_written_authorization``): no hay ningún campo de texto
+  para escribir una referencia en la interfaz, y el motor nunca
+  inventa una. La referencia que exige la CLI vive en ``scope.yaml``
+  (la CLI la toma de ahí); un plan sin casilla marcada dice
+  explícitamente "sin autorización confirmada" y solo sirve como
+  medición del scope;
 * los pasos Moodle nunca extraen ``password``;
 * la sesskey y la cookie nunca aparecen en claro en un plan
   generado: el comando de muestra las redacta.
@@ -37,7 +38,6 @@ import copy
 import hashlib
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -66,9 +66,6 @@ ALLOWED_ACTIONS = (
 ALLOWED_PIPELINES = ("standard", "with_intrusive", "with_owasp", "full_web")
 # Pipelines cuyos pasos incluyen trabajo intrusivo/activo.
 PIPELINES_NEEDING_ACTIVE_SCOPE = ("with_intrusive", "full_web")
-
-_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._\-/]+$")
-
 
 class ValidationError(ValueError):
     """Una entrada del plan no pasó un guardrail."""
@@ -312,34 +309,20 @@ def validate_target(target):
     return value
 
 
-def validate_auth_reference(ref):
-    """Referencia de autorización escrita: token seguro no vacío."""
-    if not isinstance(ref, str):
-        raise ValidationError("authorization_reference es obligatoria")
-    value = ref.strip()
-    if not value:
-        raise ValidationError("authorization_reference es obligatoria")
-    if len(value) > 200:
-        raise ValidationError("authorization_reference demasiado larga")
-    if value.startswith("-") or ".." in value.split("/"):
-        raise ValidationError("authorization_reference no válida")
-    if not _SAFE_TOKEN.fullmatch(value):
+def validate_confirmation(value):
+    """La casilla de autorización: debe ser un booleano.
+
+    ``True`` significa "Confirmo que tengo autorización escrita
+    para este alcance". Ausente equivale a ``False`` (sin
+    autorización confirmada). Cualquier otro tipo se rechaza:
+    la confirmación no es texto.
+    """
+    if value is None:
+        return False
+    if not isinstance(value, bool):
         raise ValidationError(
-            "authorization_reference no válida: caracteres no permitidos")
+            "confirm_written_authorization debe ser true o false")
     return value
-
-
-def validate_auth_reference_optional(ref):
-    """Referencia opcional por ejecución: None si viene ausente o
-    vacía (el plan dirá "sin referencia de autorización"); si viene,
-    debe ser un token seguro. Nunca inventa un valor."""
-    if ref is None:
-        return None
-    if not isinstance(ref, str):
-        raise ValidationError("authorization_reference debe ser texto")
-    if not ref.strip():
-        return None
-    return validate_auth_reference(ref)
 
 
 def validate_plan_structure(plan):
@@ -388,11 +371,10 @@ def build_pentestx_command(plan, step, dry_run=True):
         "--pipeline-profile", plan["pipeline_profile"],
         "--confirm-written-authorization",
     ]
-    # La referencia es opcional al planificar: solo se añade al
-    # comando si el usuario la aportó para esta ejecución.
-    if plan.get("authorization_reference"):
-        command += ["--authorization-reference",
-                    plan["authorization_reference"]]
+    # La referencia que exige la CLI vive en scope.yaml: la CLI la
+    # toma de ahí (--scope-file si existe). Este comando nunca lleva
+    # --authorization-reference: en la interfaz no hay ningún campo
+    # de texto para escribir una.
     if (REPO_ROOT / "scope.yaml").exists():
         command += ["--scope-file", "scope.yaml"]
     if dry_run:
@@ -424,9 +406,6 @@ def build_moodle_command(plan, step, dry_run=True):
         "--max-chars", max_chars,
         "--confirm-written-authorization",
     ]
-    if plan.get("authorization_reference"):
-        command += ["--authorization-reference",
-                    plan["authorization_reference"]]
     if dry_run:
         command.append("--dry-run")
     return command
@@ -502,16 +481,18 @@ def check_preconditions(step, context):
 # -- generación del plan -----------------------------------------------
 
 
-def generate_plan(goal, target, scope, authorization_reference=None,
+def generate_plan(goal, target, scope, confirm_written_authorization=False,
                   mapping=None, moodle=None):
     """Genera el plan de un goal sin ejecutar nada.
 
-    ``authorization_reference`` es opcional: sirve para
-    delimitar/registrar el scope de una ejecución concreta. Si no
-    se aporta, el plan lleva ``authorization_reference: None`` y la
-    nota "sin referencia de autorización" (nunca se inventa una).
-    La ejecución real sí exige una referencia (la CLI la pide
-    incluso para el dry-run, salvo que scope.yaml ya tenga una).
+    ``confirm_written_authorization`` es la casilla de la interfaz:
+    True significa "Confirmo que tengo autorización escrita para
+    este alcance". Si no se marca, el plan lleva
+    ``confirm_written_authorization: False`` y la nota "sin
+    autorización confirmada" (nunca se inventa una referencia).
+    La referencia que exige la CLI vive en ``scope.yaml``: la CLI
+    la toma de ahí al ejecutar; sin ella, la ejecución real se
+    rechaza (ver ``web-ui/server.py``).
 
     ``mapping``: {"tools_available": {"nmap": bool, ...},
     "sessions": [...], "findings": int} (todo opcional).
@@ -524,7 +505,7 @@ def generate_plan(goal, target, scope, authorization_reference=None,
             % (goal, ", ".join(sorted(GOALS))))
     spec = GOALS[goal]
     target = validate_target(target)
-    auth_ref = validate_auth_reference_optional(authorization_reference)
+    confirmed = validate_confirmation(confirm_written_authorization)
     if scope not in ALLOWED_SCOPES:
         raise ValidationError("scope debe ser passive o active")
     if scope != spec["scope"]:
@@ -549,11 +530,12 @@ def generate_plan(goal, target, scope, authorization_reference=None,
         "target": target,
         "scope": scope,
         "pipeline_profile": pipeline,
-        "authorization_reference": auth_ref,
+        "confirm_written_authorization": confirmed,
         "authorization_note": (
-            "sin referencia de autorización"
-            if auth_ref is None else
-            "referencia de autorización: %s" % auth_ref),
+            "autorización confirmada por casilla, sin referencia "
+            "en la interfaz"
+            if confirmed else
+            "sin autorización confirmada"),
         "warnings": [],
         "steps": [],
     }

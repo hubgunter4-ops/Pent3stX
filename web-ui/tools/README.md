@@ -51,8 +51,11 @@ directo por CLI.
   que la sesión siga vigente.
 - Solo la librería estándar de Python 3: sin `requests` ni
   `termcolor`.
-- Autorización escrita: `--confirm-written-authorization` y
-  `--authorization-reference` son obligatorios para ejecutar.
+- Autorización escrita: la única autorización es la casilla
+  `--confirm-written-authorization` ("Confirmo que tengo
+  autorización escrita para este alcance"). La herramienta no
+  recibe ninguna referencia de texto: no existe el flag
+  `--authorization-reference`.
 
 ## Uso por CLI
 
@@ -67,8 +70,7 @@ python3 web-ui/tools/moodle_sqli.py \
   --sesskey <sesskey-vigente> \
   --session-cookie <valor-MoodleSession-vigente> \
   --extract database username \
-  --confirm-written-authorization \
-  --authorization-reference docs/AUTORIZACION-moodle-local.md
+  --confirm-written-authorization
 ```
 
 Opciones: `--sleep` (segundos de SLEEP, defecto 3, 1–10),
@@ -82,19 +84,21 @@ exacto (secretos redactados) y los resultados.
 ## Uso desde la web-ui
 
 Menú **Tools → Moodle SQLi (local)**: pide base-url, sesskey,
-cookie de sesión, qué extraer (database / username) y la referencia
-de autorización. Flujo: dry-run → muestra los payloads en la
-consola → confirmación → ejecución → salida real en la consola
-verde. Sin backend, la entrada queda deshabilitada y no simula nada.
+cookie de sesión, qué extraer (database / username) y la casilla de
+autorización escrita. Flujo: dry-run → muestra los payloads en la
+consola → confirmación (con su propia casilla) → ejecución → salida
+real en la consola verde. Sin backend, la entrada queda deshabilitada
+y no simula nada.
 
 ## API del backend
 
 - `POST /api/tools/moodle-sqli/dry-run` — valida y devuelve los
-  payloads exactos sin enviar nada. Requiere referencia de
-  autorización.
+  payloads exactos sin enviar nada (la casilla no se necesita para
+  el dry-run: es una medición).
 - `POST /api/tools/moodle-sqli/run` — `{confirm: true,
-  authorization_reference}`. Solo con dry-run previo del comando
-  exacto y la misma referencia; si no, 409 sin ejecutar.
+  confirm_written_authorization}`. Solo con dry-run previo del
+  comando exacto y la casilla marcada; sin casilla, 409 sin
+  ejecutar. La sonda no usa `scope.yaml`: solo necesita la casilla.
 
 ## Tests
 

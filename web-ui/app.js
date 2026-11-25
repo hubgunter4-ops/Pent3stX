@@ -251,11 +251,11 @@
         command: plan.command, command_exact: plan.command_exact
       });
       if (plan.needs_authorization) {
-        log("[!] " + (plan.authorization_note || "sin referencia de autorización") +
-            ": la CLI exige una referencia incluso para el dry-run " +
-            "(salvo que scope.yaml ya tenga una). El plan es una medición " +
-            "del scope; para ejecutar, escribe la referencia en el diálogo " +
-            "de confirmación.");
+        log("[!] " + (plan.authorization_note || "sin autorización confirmada") +
+            ": la CLI exige una referencia en scope.yaml incluso para el " +
+            "dry-run. El plan es una medición del scope; para ejecutar, " +
+            "pon la referencia en scope.yaml (copia scope.example.yaml) " +
+            "y marca la casilla en el diálogo de confirmación.");
       } else {
         log("[+] Dry-run OK. Comando exacto:");
       }
@@ -264,7 +264,7 @@
         log("[+] Manifiesto del dry-run: " + JSON.stringify(plan.manifest).slice(0, 500));
       }
       document.getElementById("confirmCommand").textContent = plan.command;
-      document.getElementById("confirmAuth").value = "";
+      document.getElementById("confirmAuth").checked = false;
       document.getElementById("confirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Dry-run rechazado: " + err.message + ". No se ejecuta nada.");
@@ -276,10 +276,11 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando el comando exacto del dry-run… (Pause para detener)");
-    var ref = document.getElementById("confirmAuth").value.trim();
     api("/api/execute", {
       method: "POST",
-      body: { confirm: true, authorization_reference: ref || null }
+      body: { confirm: true,
+              confirm_written_authorization:
+                document.getElementById("confirmAuth").checked }
     }, 620000).then(function (res) {
       state.running = false;
       renderBackend();
@@ -331,7 +332,7 @@
     document.getElementById("moodleCookie").value = "";
     document.getElementById("moodleExtractDb").checked = true;
     document.getElementById("moodleExtractUser").checked = true;
-    document.getElementById("moodleAuth").value = "";
+    document.getElementById("moodleAuth").checked = false;
   }
 
   function moodleDryRun() {
@@ -355,7 +356,7 @@
       });
       document.getElementById("moodleConfirmPayloads").textContent =
         JSON.stringify(data.payloads || [], null, 2).slice(0, 4000);
-      document.getElementById("moodleConfirmAuth").value = "";
+      document.getElementById("moodleConfirmAuth").checked = false;
       document.getElementById("moodleConfirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Dry-run Moodle rechazado: " + err.message + ". No se ejecuta nada.");
@@ -368,11 +369,11 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando la sonda Moodle SQLi… (lenta: segundos por carácter acertado; Pause para detener)");
-    var ref = document.getElementById("moodleConfirmAuth").value.trim();
     api("/api/tools/moodle-sqli/run", {
       method: "POST",
       body: { confirm: true,
-              authorization_reference: ref || req.authorization_reference || null }
+              confirm_written_authorization:
+                document.getElementById("moodleConfirmAuth").checked }
     }, 620000).then(function (res) {
       state.running = false;
       renderBackend();
@@ -408,7 +409,7 @@
     document.getElementById("engineGoal").value = "owasp_report";
     document.getElementById("engineTarget").value = state.config.target;
     document.getElementById("engineScope").value = state.config.scope;
-    document.getElementById("engineAuth").value = "";
+    document.getElementById("engineAuth").checked = false;
     document.getElementById("engineMoodleBaseUrl").value = "http://127.0.0.1:8080/moodle";
     document.getElementById("engineMoodleSesskey").value = "";
     document.getElementById("engineMoodleCookie").value = "";
@@ -433,7 +434,7 @@
     document.getElementById("planNote").textContent =
       "Plan del motor: goal " + plan.goal + " | Target: " + plan.target +
       " | Scope: " + plan.scope + " | Pipeline: " + plan.pipeline_profile +
-      " | " + (plan.authorization_note || "sin referencia de autorización") +
+      " | " + (plan.authorization_note || "sin autorización confirmada") +
       (plan.warnings && plan.warnings.length ? " | Avisos: " + plan.warnings.join("; ") : "") +
       ". Confirma para ejecutar paso a paso.";
     document.getElementById("mapHeader").textContent =
@@ -451,7 +452,8 @@
       goal: goal,
       target: document.getElementById("engineTarget").value.trim(),
       scope: document.getElementById("engineScope").value,
-      authorization_reference: document.getElementById("engineAuth").value.trim()
+      confirm_written_authorization:
+        document.getElementById("engineAuth").checked
     };
     if (goal === "moodle_sqli_confirm") {
       body.moodle = {
@@ -470,7 +472,7 @@
           return { id: step.id, action: step.action, tool: step.tool,
             status: step.status, dry_run_command: step.dry_run_command };
         }), null, 2).slice(0, 4000);
-      document.getElementById("engineConfirmAuth").value = "";
+      document.getElementById("engineConfirmAuth").checked = false;
       document.getElementById("engineConfirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Plan del motor rechazado: " + err.message + ". No se ejecuta nada.");
@@ -482,11 +484,11 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando el plan del motor paso a paso… (Pause para detener)");
-    var ref = document.getElementById("engineConfirmAuth").value.trim();
     api("/api/engine/run", {
       method: "POST",
       body: { confirm: true,
-              authorization_reference: ref || state.enginePlan.authorization_reference || null }
+              confirm_written_authorization:
+                document.getElementById("engineConfirmAuth").checked }
     }, 1800000).then(function (res) {
       state.running = false;
       renderBackend();
@@ -794,6 +796,21 @@
         state.config.scope + ", " + state.config.pipeline_profile + ".");
   });
 
+  // La casilla de autorización bloquea la confirmación en la UI:
+  // sin marcarla, el diálogo no se cierra ni se ejecuta nada.
+  function requireAuthCheckbox(formId, checkboxId) {
+    document.getElementById(formId).addEventListener("submit", function (ev) {
+      if (ev.submitter && ev.submitter.value === "cancel") return;
+      if (!document.getElementById(checkboxId).checked) {
+        ev.preventDefault();
+        log("[!!] Marca la casilla 'Confirmo que tengo autorización escrita para este alcance' para ejecutar.");
+      }
+    });
+  }
+  requireAuthCheckbox("confirmForm", "confirmAuth");
+  requireAuthCheckbox("engineConfirmForm", "engineConfirmAuth");
+  requireAuthCheckbox("moodleConfirmForm", "moodleConfirmAuth");
+
   document.getElementById("confirmDialog").addEventListener("close", function () {
     if (document.getElementById("confirmDialog").returnValue === "confirm") {
       doExecute();
@@ -827,7 +844,8 @@
       sesskey: document.getElementById("moodleSesskey").value.trim(),
       session_cookie: document.getElementById("moodleCookie").value.trim(),
       extract: extract,
-      authorization_reference: document.getElementById("moodleAuth").value.trim()
+      confirm_written_authorization:
+        document.getElementById("moodleAuth").checked
     };
     moodleDryRun();
   });

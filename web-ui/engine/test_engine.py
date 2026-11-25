@@ -22,7 +22,7 @@ def _plan(goal, mapping=None, moodle=None, **kw):
         "goal": goal,
         "target": "contaia.site",
         "scope": "passive",
-        "authorization_reference": "docs/AUTORIZACION-test.md",
+        "confirm_written_authorization": True,
     }
     args.update(kw)
     return engine.generate_plan(mapping=mapping, moodle=moodle, **args)
@@ -85,26 +85,40 @@ class TestGoals(unittest.TestCase):
         with self.assertRaises(engine.ValidationError):
             _plan("owasp_report", target="192.168.1.1")
 
-    def test_authorization_optional_when_planning(self):
-        # Sin referencia el plan es una medición del scope: dice
-        # explícitamente "sin referencia de autorización" y nunca
-        # inventa una. La ejecución real sí la exige (la CLI la pide
-        # incluso para el dry-run).
-        for ref in (None, "", "   "):
-            plan = _plan("owasp_report", authorization_reference=ref)
-            self.assertIsNone(plan["authorization_reference"])
+    def test_authorization_is_a_checkbox(self):
+        # La autorización es una casilla, no un texto: sin marcarla
+        # el plan es una medición del scope ("sin autorización
+        # confirmada"); marcada, dice "autorización confirmada por
+        # casilla, sin referencia en la interfaz". Los comandos de
+        # muestra nunca llevan --authorization-reference: la CLI la
+        # toma de scope.yaml.
+        for confirmed in (None, False):
+            plan = _plan("owasp_report",
+                         confirm_written_authorization=confirmed)
+            self.assertIs(plan["confirm_written_authorization"], False)
             self.assertEqual(plan["authorization_note"],
-                             "sin referencia de autorización")
+                             "sin autorización confirmada")
             for step in plan["steps"]:
                 self.assertNotIn("--authorization-reference",
                                  step["dry_run_command"])
+                self.assertIn("--confirm-written-authorization",
+                              step["dry_run_command"])
         plan = _plan("owasp_report")
-        self.assertEqual(plan["authorization_reference"],
-                         "docs/AUTORIZACION-test.md")
-        self.assertIn("docs/AUTORIZACION-test.md",
-                      plan["authorization_note"])
-        self.assertIn("--authorization-reference",
+        self.assertIs(plan["confirm_written_authorization"], True)
+        self.assertEqual(
+            plan["authorization_note"],
+            "autorización confirmada por casilla, sin referencia "
+            "en la interfaz")
+        self.assertIn("--confirm-written-authorization",
                       _step(plan, "passive")["dry_run_command"])
+        self.assertNotIn("--authorization-reference",
+                         _step(plan, "passive")["dry_run_command"])
+
+    def test_confirmation_must_be_boolean(self):
+        with self.assertRaises(engine.ValidationError):
+            _plan("owasp_report", confirm_written_authorization="sí")
+        with self.assertRaises(engine.ValidationError):
+            _plan("owasp_report", confirm_written_authorization=1)
 
     def test_max_steps_enforced(self):
         plan = _plan("owasp_report")
@@ -276,8 +290,7 @@ class TestPreconditions(unittest.TestCase):
                          engine.plan_hash(engine.generate_plan(
                              goal="owasp_report", target="contaia.site",
                              scope="passive",
-                             authorization_reference=(
-                                 "docs/AUTORIZACION-test.md"))))
+                             confirm_written_authorization=True)))
 
 
 if __name__ == "__main__":

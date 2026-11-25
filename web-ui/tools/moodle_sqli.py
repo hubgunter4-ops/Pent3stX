@@ -28,8 +28,10 @@ Scope and limits, enforced by this script itself:
   ``password`` column is deliberately NOT extractable: the hash in
   ``mdl_user.password`` was left out on purpose and is only added if
   Robert asks for it explicitly;
-* execution requires ``--confirm-written-authorization`` and a
-  non-empty ``--authorization-reference``;
+* execution requires ``--confirm-written-authorization`` (the checkbox
+  in the web-ui: "Confirmo que tengo autorización escrita para este
+  alcance"). There is no text reference anywhere: this tool takes
+  none at all, and never invents one;
 * ``--dry-run`` prints the exact request payloads that would be sent
   and sends nothing;
 * the session cookie and sesskey are never written to disk or printed
@@ -42,8 +44,7 @@ Usage (from the repository root)::
         --sesskey <sesskey-del-navegador> \\
         --session-cookie <valor-de-MoodleSession> \\
         --extract database username \\
-        --confirm-written-authorization \\
-        --authorization-reference docs/AUTORIZACION-moodle-local.md
+        --confirm-written-authorization
 
 Only for your own Moodle in the lab, covered by written
 authorization. The sesskey and the MoodleSession cookie expire: take
@@ -84,7 +85,6 @@ TOOL_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOL_DIR.parent.parent
 EVIDENCE_ROOT = REPO_ROOT / "workspace" / "moodle_sqli"
 
-_TOKEN = re.compile(r"^[A-Za-z0-9._\-/]+$")
 _SESSKEY = re.compile(r"^[A-Za-z0-9]{1,128}$")
 _COOKIE = re.compile(r"^[A-Za-z0-9_\-]{1,256}$")
 
@@ -122,23 +122,6 @@ def validate_token(value, label):
     else:
         if not _COOKIE.fullmatch(value):
             raise ValidationError("session-cookie no válido")
-    return value
-
-
-def validate_auth_reference(ref):
-    """Same rule as the web-ui backend: a safe, non-empty token."""
-    if not isinstance(ref, str):
-        raise ValidationError("authorization_reference es obligatoria")
-    value = ref.strip()
-    if not value:
-        raise ValidationError("authorization_reference es obligatoria")
-    if len(value) > 200:
-        raise ValidationError("authorization_reference demasiado larga")
-    if value.startswith("-") or ".." in value.split("/"):
-        raise ValidationError("authorization_reference no válida")
-    if not _TOKEN.fullmatch(value):
-        raise ValidationError(
-            "authorization_reference no válida: caracteres no permitidos")
     return value
 
 
@@ -342,10 +325,10 @@ def extract_value(client, column, max_chars, log):
 def build_command(request, dry_run):
     """The exact, fixed CLI argument list for a validated request.
 
-    ``--authorization-reference`` only appears when the request
-    carries one: the reference is optional when planning/measuring
-    the scope, and mandatory to execute (the tool itself requires
-    it plus --confirm-written-authorization before running).
+    The only authorization input is the checkbox
+    (``--confirm-written-authorization``). There is no text
+    reference anywhere in this tool: it takes none and never
+    invents one.
     """
     command = [
         sys.executable,
@@ -359,9 +342,6 @@ def build_command(request, dry_run):
         "--max-chars", str(request["max_chars"]),
         "--confirm-written-authorization",
     ]
-    if request.get("authorization_reference"):
-        command += ["--authorization-reference",
-                    request["authorization_reference"]]
     if dry_run:
         command.append("--dry-run")
     return command
@@ -384,7 +364,7 @@ def save_evidence(evidence_root, request, result):
         "sleep": request["sleep"],
         "timeout": request["timeout"],
         "max_chars": request["max_chars"],
-        "authorization_reference": request["authorization_reference"],
+        "confirm_written_authorization": True,
         "sesskey": secret_fingerprint(request["sesskey"]),
         "session_cookie": secret_fingerprint(request["session_cookie"]),
         "result": result,
@@ -414,8 +394,6 @@ def parse_args(argv):
                         help="timeout HTTP por petición (5-60)")
     parser.add_argument("--confirm-written-authorization", action="store_true",
                         help="confirma que existe autorización escrita")
-    parser.add_argument("--authorization-reference", default="",
-                        help="referencia de la autorización escrita")
     parser.add_argument("--dry-run", action="store_true",
                         help="muestra los payloads exactos sin enviar nada")
     parser.add_argument("--evidence-dir", default=str(EVIDENCE_ROOT),
@@ -458,7 +436,6 @@ def main(argv=None):
     try:
         sesskey = validate_token(args.sesskey, "sesskey")
         session_cookie = validate_token(args.session_cookie, "session-cookie")
-        auth_ref = validate_auth_reference(args.authorization_reference)
     except ValidationError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
@@ -475,7 +452,6 @@ def main(argv=None):
         "sleep": sleep,
         "timeout": timeout,
         "max_chars": max_chars,
-        "authorization_reference": auth_ref,
     }
     client = MoodleClient(base_url, sesskey, session_cookie, sleep, timeout)
     try:

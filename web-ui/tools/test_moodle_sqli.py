@@ -32,7 +32,6 @@ import server  # noqa: E402
 BASE_URL = "http://127.0.0.1:8080/moodle"
 SESSKEY = "ZT0E6J0xWe"
 COOKIE = "5b1rk2pfdpbcq2i5hmmern1os0"
-AUTH = "docs/AUTORIZACION-moodle-local.md"
 
 
 def base_request(**overrides):
@@ -44,7 +43,6 @@ def base_request(**overrides):
         "sleep": 1,
         "timeout": 15,
         "max_chars": 50,
-        "authorization_reference": AUTH,
     }
     request.update(overrides)
     return request
@@ -134,7 +132,9 @@ class TestPayloads(unittest.TestCase):
         command = moodle_sqli.build_command(base_request(), dry_run=True)
         self.assertIn("--dry-run", command)
         self.assertIn("--confirm-written-authorization", command)
-        self.assertIn("--authorization-reference", command)
+        # La herramienta ya no recibe ninguna referencia de texto:
+        # el comando nunca lleva --authorization-reference.
+        self.assertNotIn("--authorization-reference", command)
         self.assertIn("moodle_sqli.py", " ".join(command))
         self.assertNotIn("password", " ".join(command))
         execute = moodle_sqli.build_command(base_request(), dry_run=False)
@@ -150,12 +150,14 @@ class TestPayloads(unittest.TestCase):
         self.assertIn("database", dumped)
         self.assertIn("SLEEP(3)", dumped)
 
-    def test_auth_reference_validation(self):
-        self.assertEqual(moodle_sqli.validate_auth_reference(AUTH), AUTH)
-        for bad in ("", "a; rm -rf /", "--flag", "../etc/passwd", "a b"):
-            with self.subTest(bad=bad):
-                self.assertRaises(moodle_sqli.ValidationError,
-                                  moodle_sqli.validate_auth_reference, bad)
+    def test_no_text_reference_anywhere(self):
+        # No hay ninguna función de validación de referencia de
+        # texto: la única autorización es la casilla
+        # (--confirm-written-authorization).
+        self.assertFalse(hasattr(moodle_sqli, "validate_auth_reference"))
+        self.assertNotIn("--authorization-reference",
+                         " ".join(moodle_sqli.build_command(
+                             base_request(), dry_run=True)))
 
 
 class TestDryRunSendsNothing(unittest.TestCase):
@@ -173,7 +175,9 @@ class TestDryRunSendsNothing(unittest.TestCase):
         self.assertTrue(data["dry_run"])
         self.assertEqual(data["extract"], ["database", "username"])
 
-    def test_main_without_authorization_refused(self):
+    def test_main_without_confirmation_refused(self):
+        # Sin la casilla (--confirm-written-authorization) no hay
+        # ejecución: se rechaza antes de enviar nada.
         out = io.StringIO()
         err = io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -184,7 +188,7 @@ class TestDryRunSendsNothing(unittest.TestCase):
                 "--extract", "database",
             ])
         self.assertEqual(rc, 2)
-        self.assertIn("authorization", err.getvalue().lower())
+        self.assertIn("confirm-written-authorization", err.getvalue())
 
 
 # -- Mock Moodle -------------------------------------------------------
@@ -262,7 +266,6 @@ class TestAgainstMock(unittest.TestCase):
                     "--extract", "database", "username",
                     "--sleep", "1",
                     "--confirm-written-authorization",
-                    "--authorization-reference", AUTH,
                     "--evidence-dir", tmp,
                 ])
             self.assertEqual(rc, 0)
@@ -310,21 +313,17 @@ class TestServerMoodleValidation(unittest.TestCase):
             server.validate_moodle_request(
                 base_request(base_url="http://127.0.0.1:8080/moodle2"))
 
-    def test_validate_moodle_request_auth_optional(self):
-        # Sin referencia el dry-run es una medición del scope: la
-        # petición queda con None y el comando no lleva el flag.
-        # La ejecución real sí exige una referencia.
-        req = server.validate_moodle_request(
-            base_request(authorization_reference=""))
-        self.assertIsNone(req["authorization_reference"])
+    def test_validate_moodle_request_has_no_reference(self):
+        # La petición ya no lleva ninguna referencia de texto: ni
+        # el dict validado ni el comando que se construye de él
+        # la mencionan. La única autorización es la casilla, que
+        # se comprueba en el endpoint de ejecución, no aquí.
+        req = server.validate_moodle_request(base_request())
+        self.assertNotIn("authorization_reference", req)
         command = server.build_moodle_command(req, dry_run=True)
         self.assertNotIn("--authorization-reference", command)
         self.assertNotIn(None, command)
-        req = server.validate_moodle_request(base_request())
-        self.assertEqual(req["authorization_reference"], AUTH)
-        with self.assertRaises(server.ValidationError):
-            server.validate_moodle_request(
-                base_request(authorization_reference=""), require_auth=True)
+        self.assertIn("--confirm-written-authorization", command)
 
 
 if __name__ == "__main__":
