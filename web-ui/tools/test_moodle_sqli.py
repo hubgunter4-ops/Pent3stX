@@ -310,10 +310,21 @@ class TestServerMoodleValidation(unittest.TestCase):
             server.validate_moodle_request(
                 base_request(base_url="http://127.0.0.1:8080/moodle2"))
 
-    def test_validate_moodle_request_needs_auth(self):
+    def test_validate_moodle_request_auth_optional(self):
+        # Sin referencia el dry-run es una medición del scope: la
+        # petición queda con None y el comando no lleva el flag.
+        # La ejecución real sí exige una referencia.
+        req = server.validate_moodle_request(
+            base_request(authorization_reference=""))
+        self.assertIsNone(req["authorization_reference"])
+        command = server.build_moodle_command(req, dry_run=True)
+        self.assertNotIn("--authorization-reference", command)
+        self.assertNotIn(None, command)
+        req = server.validate_moodle_request(base_request())
+        self.assertEqual(req["authorization_reference"], AUTH)
         with self.assertRaises(server.ValidationError):
             server.validate_moodle_request(
-                base_request(authorization_reference=""))
+                base_request(authorization_reference=""), require_auth=True)
 
 
 if __name__ == "__main__":

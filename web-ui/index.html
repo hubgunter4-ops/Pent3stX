@@ -234,7 +234,7 @@
       <span><input type="checkbox" id="moodleExtractDb" checked> database()</span>
       <span><input type="checkbox" id="moodleExtractUser" checked> username (primer usuario)</span>
     </label>
-    <label>Referencia de autorización escrita (obligatoria)
+    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta)
       <input type="text" id="moodleAuth" placeholder="docs/AUTORIZACION-moodle-local.md">
     </label>
     <p class="muted">Primero se hace dry-run y se muestran los payloads exactos en la consola; nada se envía hasta que confirmes. La cookie y el sesskey no se guardan en el navegador ni en disco.</p>
@@ -250,6 +250,9 @@
     <p>Estos son los payloads exactos del dry-run. Solo se ejecutará esta sonda, sin cambios:</p>
     <pre id="moodleConfirmPayloads" class="confirm-command"></pre>
     <p class="muted">La extracción es lenta (unos segundos por carácter acertado). Para detenerla, pulsa Pause.</p>
+    <label>Referencia de autorización escrita (opcional aquí si ya la pusiste arriba; obligatoria para ejecutar)
+      <input type="text" id="moodleConfirmAuth" placeholder="docs/AUTORIZACION-moodle-local.md">
+    </label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -276,7 +279,7 @@
         <option value="active">active</option>
       </select>
     </label>
-    <label>Referencia de autorización escrita (obligatoria)
+    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta)
       <input type="text" id="engineAuth" placeholder="docs/AUTORIZACION-contaia.md">
     </label>
     <div id="engineMoodleFields" hidden>
@@ -303,6 +306,9 @@
     <p>Estos son los pasos del plan aprobado. Solo se ejecutará este plan, sin cambios:</p>
     <pre id="engineConfirmPlan" class="confirm-command"></pre>
     <p class="muted">Cada paso hace su propio dry-run antes de ejecutarse. Para detenerlo, pulsa Pause.</p>
+    <label>Referencia de autorización escrita (opcional aquí si ya la pusiste al generar el plan; obligatoria para ejecutar)
+      <input type="text" id="engineConfirmAuth" placeholder="docs/AUTORIZACION-contaia.md">
+    </label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar plan</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -315,6 +321,9 @@
     <p>Este es el comando exacto aprobado por el dry-run. Solo se ejecutará este comando, sin cambios:</p>
     <pre id="confirmCommand" class="confirm-command"></pre>
     <p class="muted">La ejecución usa solo pipelines controlados y el alcance permitido. Para detenerla, pulsa Pause.</p>
+    <label>Referencia de autorización escrita (opcional; delimita y registra el scope de esta ejecución concreta — obligatoria para ejecutar)
+      <input type="text" id="confirmAuth" placeholder="docs/AUTORIZACION-contaia.md">
+    </label>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
@@ -341,12 +350,9 @@
         <option value="full_web">full_web</option>
       </select>
     </label>
-    <label>Referencia de autorización escrita (obligatoria)
-      <input type="text" id="cfgAuth" placeholder="docs/AUTORIZACION-contaia.md">
-    </label>
     <label><input type="checkbox" id="optMotion"> Reduce motion (disable scanline / pulse animations)</label>
     <label><input type="checkbox" id="optConsole" checked> Keep terminal console fixed at the bottom</label>
-    <p class="muted">El servidor valida target, scope, pipeline y autorización; las acciones activas exigen scope active. Sin backend, Start no hace nada.</p>
+    <p class="muted">El servidor valida target, scope y pipeline. La referencia de autorización ya no vive aquí: se pide por ejecución, en el diálogo de confirmación, y sirve para delimitar y registrar el scope de esa ejecución concreta. Sin backend, Start no hace nada.</p>
     <button type="submit" class="dialog-btn">Guardar y cerrar</button>
   </form>
 </dialog>

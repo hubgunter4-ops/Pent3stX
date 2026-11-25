@@ -10,7 +10,8 @@ nada y lo dice.
 > **Uso autorizado únicamente.** Solo para activos propios o cubiertos
 > por autorización escrita y reglas de compromiso vigentes. La
 > ejecución real solo acepta los targets permitidos y exige la
-> referencia de autorización escrita.
+> referencia de autorización escrita, que se pide por ejecución
+> (nunca se guarda en el navegador).
 
 ## Cómo arrancar
 
@@ -33,9 +34,14 @@ Start queda deshabilitado. No hay modo simulación.
 ## Flujo: dry-run → confirmación → ejecución
 
 1. **Configura** en Config (o con los valores por defecto): target
-   `contaia.site`, scope `passive`, pipeline `with_owasp` y la
-   referencia de autorización escrita (por ejemplo
-   `docs/AUTORIZACION-contaia.md`). Sin referencia no hay Start.
+   `contaia.site`, scope `passive` y pipeline `with_owasp`. La
+   referencia de autorización escrita ya no vive en Config ni se
+   guarda en el navegador: se pide por ejecución, en el diálogo de
+   confirmación, y sirve para delimitar y registrar el scope de esa
+   ejecución concreta. Sin ella, el dry-run funciona como medición
+   del scope y dice explícitamente "sin referencia de autorización",
+   pero la ejecución se rechaza (la CLI exige una referencia incluso
+   para el dry-run, salvo que `scope.yaml` ya tenga una).
 2. **Elige fase** en el árbol `OPERATIONS • PHASES` (por ejemplo
    `owasp_web`, seleccionada por defecto). La fase define las acciones
    que se pedirán a la CLI.
@@ -81,30 +87,44 @@ Start queda deshabilitado. No hay modo simulación.
 
 - `GET /api/status` — `{backend: "ok", pentestx_present: true|false}`.
 - `POST /api/plan` — `{target, scope, actions[], pipeline_profile,
-  authorization_reference}`. Devuelve el comando exacto, la salida,
-  el exit code, el manifiesto y la sesión del dry-run.
-- `POST /api/execute` — `{confirm: true, authorization_reference}`.
-  Solo con dry-run previo del comando exacto. Devuelve salida, exit
-  code, sesión y manifiesto.
+  authorization_reference?}`. Devuelve el comando exacto, la salida,
+  el exit code, el manifiesto y la sesión del dry-run. Sin referencia,
+  el dry-run es una medición del scope: devuelve el plan con
+  `authorization_note: "sin referencia de autorización"` y
+  `needs_authorization: true` (la CLI exige una referencia incluso
+  para el dry-run, salvo que `scope.yaml` ya tenga una).
+- `POST /api/execute` — `{confirm: true, authorization_reference?}`.
+  Solo con dry-run previo del comando exacto; la ejecución exige una
+  referencia (si llega solo al confirmar, el servidor hace primero
+  el dry-run del comando exacto con ella). Sin referencia, 409 con
+  "se requiere referencia de autorización escrita para ejecutar".
+  Devuelve salida, exit code, sesión y manifiesto.
 - `POST /api/stop` — detiene el proceso en curso.
 - `GET /api/sessions` — sesiones reales de
   `workspace/pentestx_sessions/`.
 - `GET /api/findings?session=<nombre>` — findings de esa sesión,
   máximo 200, tal cual vienen de `findings_db.json`.
 - `POST /api/tools/moodle-sqli/dry-run` — valida y devuelve los
-  payloads exactos de la sonda Moodle SQLi sin enviar nada
-  (requiere referencia de autorización).
+  payloads exactos de la sonda Moodle SQLi sin enviar nada (la
+  referencia es opcional; sin ella el dry-run es una medición del
+  scope).
 - `POST /api/tools/moodle-sqli/run` — `{confirm: true,
-  authorization_reference}`. Solo con dry-run previo del comando
-  exacto y la misma referencia; si no, 409 sin ejecutar.
+  authorization_reference?}`. Solo con dry-run previo del comando
+  exacto; la ejecución exige una referencia (si llega solo al
+  confirmar, el servidor hace primero el dry-run con ella). Sin
+  referencia, 409 sin ejecutar.
 - `GET /api/engine/goals` — los 3 goals del motor con descripción,
   requisitos y pasos.
 - `POST /api/engine/plan` — `{goal, target, scope,
-  authorization_reference, moodle?}`. Genera el plan sin ejecutar
-  nada; lo deja aprobado en memoria del servidor.
+  authorization_reference?, moodle?}`. Genera el plan sin ejecutar
+  nada; lo deja aprobado en memoria del servidor. Sin referencia, el
+  plan dice "sin referencia de autorización" y sirve como medición
+  del scope.
 - `POST /api/engine/run` — `{confirm: true,
-  authorization_reference}`. Solo con plan aprobado y la misma
-  referencia; ejecuta el plan paso a paso (dry-run por paso,
+  authorization_reference?}`. La ejecución exige una referencia:
+  si el plan se generó sin ella, hay que aportarla aquí (el plan se
+  reconstruye con ella antes de correr); si no se aporta ninguna,
+  409. Ejecuta el plan paso a paso (dry-run por paso,
   precondiciones, `replan`) y guarda la evidencia en
   `workspace/engine_runs/<timestamp>/plan.json`.
 
@@ -166,7 +186,8 @@ script aparte con sus propios guardrails.
 ## Qué NO hace
 
 - No ejecuta nada sin dry-run previo del comando exacto ni sin
-  referencia de autorización.
+  referencia de autorización (que se aporta al confirmar, por
+  ejecución; nunca se guarda).
 - No acepta targets fuera de la allowlist ni acciones o pipelines
   fuera de las listas permitidas.
 - No instala herramientas ni ejecuta comandos arbitrarios.

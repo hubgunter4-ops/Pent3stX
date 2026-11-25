@@ -33,8 +33,7 @@
     config: {
       target: "contaia.site",
       scope: "passive",
-      pipeline_profile: "with_owasp",
-      authorization_reference: ""
+      pipeline_profile: "with_owasp"
     }
   };
 
@@ -231,22 +230,16 @@
       log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. No se simula nada.");
       return;
     }
-    if (!state.config.authorization_reference) {
-      log("[!!] Falta la referencia de autorización escrita: ábrela en Config y guárdala antes de Start.");
-      document.getElementById("configDialog").showModal();
-      return;
-    }
     var payload = {
       target: state.config.target,
       scope: state.config.scope,
       actions: phaseActions(),
-      pipeline_profile: state.config.pipeline_profile,
-      authorization_reference: state.config.authorization_reference
+      pipeline_profile: state.config.pipeline_profile
     };
     log("[*] Dry-run: " + payload.actions.join(" ") + " sobre " + payload.target +
         " (scope " + payload.scope + ", pipeline " + payload.pipeline_profile + ")…");
     api("/api/plan", { method: "POST", body: payload }, 130000).then(function (plan) {
-      if (plan.exit_code !== 0) {
+      if (plan.exit_code !== 0 && !plan.needs_authorization) {
         log("[!!] Dry-run rechazado por la CLI (exit " + plan.exit_code + "). No se ejecuta nada.");
         logLines(plan.stdout);
         logLines(plan.stderr);
@@ -257,12 +250,21 @@
         actions: payload.actions, pipeline_profile: payload.pipeline_profile,
         command: plan.command, command_exact: plan.command_exact
       });
-      log("[+] Dry-run OK. Comando exacto:");
+      if (plan.needs_authorization) {
+        log("[!] " + (plan.authorization_note || "sin referencia de autorización") +
+            ": la CLI exige una referencia incluso para el dry-run " +
+            "(salvo que scope.yaml ya tenga una). El plan es una medición " +
+            "del scope; para ejecutar, escribe la referencia en el diálogo " +
+            "de confirmación.");
+      } else {
+        log("[+] Dry-run OK. Comando exacto:");
+      }
       log("    " + plan.command);
       if (plan.manifest) {
         log("[+] Manifiesto del dry-run: " + JSON.stringify(plan.manifest).slice(0, 500));
       }
       document.getElementById("confirmCommand").textContent = plan.command;
+      document.getElementById("confirmAuth").value = "";
       document.getElementById("confirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Dry-run rechazado: " + err.message + ". No se ejecuta nada.");
@@ -274,12 +276,19 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando el comando exacto del dry-run… (Pause para detener)");
+    var ref = document.getElementById("confirmAuth").value.trim();
     api("/api/execute", {
       method: "POST",
-      body: { confirm: true, authorization_reference: state.config.authorization_reference }
+      body: { confirm: true, authorization_reference: ref || null }
     }, 620000).then(function (res) {
       state.running = false;
       renderBackend();
+      if (res.dry_run_approved === false) {
+        log("[!!] No se ejecutó nada: " + (res.error || "dry-run rechazado"));
+        logLines(res.stdout);
+        logLines(res.stderr);
+        return;
+      }
       logLines(res.stdout);
       logLines(res.stderr);
       log("[+] Ejecución terminada: exit " + res.exit_code +
@@ -322,7 +331,7 @@
     document.getElementById("moodleCookie").value = "";
     document.getElementById("moodleExtractDb").checked = true;
     document.getElementById("moodleExtractUser").checked = true;
-    document.getElementById("moodleAuth").value = state.config.authorization_reference || "";
+    document.getElementById("moodleAuth").value = "";
   }
 
   function moodleDryRun() {
@@ -346,6 +355,7 @@
       });
       document.getElementById("moodleConfirmPayloads").textContent =
         JSON.stringify(data.payloads || [], null, 2).slice(0, 4000);
+      document.getElementById("moodleConfirmAuth").value = "";
       document.getElementById("moodleConfirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Dry-run Moodle rechazado: " + err.message + ". No se ejecuta nada.");
@@ -358,12 +368,19 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando la sonda Moodle SQLi… (lenta: segundos por carácter acertado; Pause para detener)");
+    var ref = document.getElementById("moodleConfirmAuth").value.trim();
     api("/api/tools/moodle-sqli/run", {
       method: "POST",
-      body: { confirm: true, authorization_reference: req.authorization_reference }
+      body: { confirm: true,
+              authorization_reference: ref || req.authorization_reference || null }
     }, 620000).then(function (res) {
       state.running = false;
       renderBackend();
+      if (res.dry_run_approved === false) {
+        log("[!!] No se ejecutó nada: " + (res.error || "dry-run rechazado"));
+        logLines(res.stderr);
+        return;
+      }
       logLines(res.stderr);
       var result = res.result || {};
       if (result.error) log("[!!] Moodle SQLi: " + result.error);
@@ -391,7 +408,7 @@
     document.getElementById("engineGoal").value = "owasp_report";
     document.getElementById("engineTarget").value = state.config.target;
     document.getElementById("engineScope").value = state.config.scope;
-    document.getElementById("engineAuth").value = state.config.authorization_reference || "";
+    document.getElementById("engineAuth").value = "";
     document.getElementById("engineMoodleBaseUrl").value = "http://127.0.0.1:8080/moodle";
     document.getElementById("engineMoodleSesskey").value = "";
     document.getElementById("engineMoodleCookie").value = "";
@@ -416,6 +433,7 @@
     document.getElementById("planNote").textContent =
       "Plan del motor: goal " + plan.goal + " | Target: " + plan.target +
       " | Scope: " + plan.scope + " | Pipeline: " + plan.pipeline_profile +
+      " | " + (plan.authorization_note || "sin referencia de autorización") +
       (plan.warnings && plan.warnings.length ? " | Avisos: " + plan.warnings.join("; ") : "") +
       ". Confirma para ejecutar paso a paso.";
     document.getElementById("mapHeader").textContent =
@@ -452,6 +470,7 @@
           return { id: step.id, action: step.action, tool: step.tool,
             status: step.status, dry_run_command: step.dry_run_command };
         }), null, 2).slice(0, 4000);
+      document.getElementById("engineConfirmAuth").value = "";
       document.getElementById("engineConfirmDialog").showModal();
     }).catch(function (err) {
       log("[!!] Plan del motor rechazado: " + err.message + ". No se ejecuta nada.");
@@ -463,9 +482,11 @@
     state.running = true;
     renderBackend();
     log("[+] Ejecutando el plan del motor paso a paso… (Pause para detener)");
+    var ref = document.getElementById("engineConfirmAuth").value.trim();
     api("/api/engine/run", {
       method: "POST",
-      body: { confirm: true, authorization_reference: state.enginePlan.authorization_reference }
+      body: { confirm: true,
+              authorization_reference: ref || state.enginePlan.authorization_reference || null }
     }, 1800000).then(function (res) {
       state.running = false;
       renderBackend();
@@ -501,7 +522,7 @@
     state.sessionDir = null;
     state.config = {
       target: "contaia.site", scope: "passive",
-      pipeline_profile: "with_owasp", authorization_reference: ""
+      pipeline_profile: "with_owasp"
     };
     saveConfig();
     fillConfigForm();
@@ -573,7 +594,8 @@
       if (typeof c.target === "string" && c.target) state.config.target = c.target;
       if (c.scope === "passive" || c.scope === "active") state.config.scope = c.scope;
       if (typeof c.pipeline_profile === "string") state.config.pipeline_profile = c.pipeline_profile;
-      if (typeof c.authorization_reference === "string") state.config.authorization_reference = c.authorization_reference;
+      // Una referencia guardada por una versión anterior se ignora:
+      // la referencia ya no vive en Config ni en localStorage.
       log("[*] Configuración restaurada de este navegador.");
     } catch (e) { /* keep defaults */ }
   }
@@ -582,7 +604,6 @@
     document.getElementById("cfgTarget").value = state.config.target;
     document.getElementById("cfgScope").value = state.config.scope;
     document.getElementById("cfgPipeline").value = state.config.pipeline_profile;
-    document.getElementById("cfgAuth").value = state.config.authorization_reference;
   }
 
   function selectPhase(phase) {
@@ -768,7 +789,6 @@
     state.config.target = document.getElementById("cfgTarget").value.trim();
     state.config.scope = document.getElementById("cfgScope").value;
     state.config.pipeline_profile = document.getElementById("cfgPipeline").value;
-    state.config.authorization_reference = document.getElementById("cfgAuth").value.trim();
     saveConfig();
     log("[*] Configuración actualizada: " + state.config.target + ", " +
         state.config.scope + ", " + state.config.pipeline_profile + ".");

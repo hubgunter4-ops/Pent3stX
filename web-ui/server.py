@@ -7,7 +7,12 @@ the real ``pentestx.py`` CLI under the same guardrails as the CLI itself:
   and ``127.0.0.1`` (private networks, 169.254.169.254, 0.0.0.0/0,
   networks broader than /24, multicast and any other loopback are
   rejected);
-* ``--authorization-reference`` is mandatory and non-empty;
+* ``--authorization-reference`` is optional when planning
+  (it only delimits/records the scope of a concrete execution;
+  a plan without one says so explicitly and never invents one),
+  but mandatory to execute: the CLI requires a reference even
+  for ``--dry-run`` (unless ``scope.yaml`` already carries one),
+  so execution without one is refused with a clear message;
 * only allowlisted actions and controlled pipelines
   (standard / with_intrusive / with_owasp / full_web);
 * active actions require ``--scope active``;
@@ -177,6 +182,19 @@ def validate_auth_reference(ref):
     return value
 
 
+def validate_auth_reference_optional(ref):
+    """Optional per-execution reference: None when absent or empty
+    (the plan then says "sin referencia de autorización"); when
+    present it must be a safe token. Never invents a value."""
+    if ref is None:
+        return None
+    if not isinstance(ref, str):
+        raise ValidationError("authorization_reference debe ser texto")
+    if not ref.strip():
+        return None
+    return validate_auth_reference(ref)
+
+
 def validate_plan(payload):
     """Validate a /api/plan payload. Returns a clean plan dict."""
     if not isinstance(payload, dict):
@@ -199,13 +217,21 @@ def validate_plan(payload):
         raise ValidationError("pipeline_profile no permitido")
     if pipeline in PIPELINES_NEEDING_ACTIVE_SCOPE and scope != "active":
         raise ValidationError("el pipeline %s exige scope active" % pipeline)
-    auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+    # Optional when planning: it only delimits/records the scope
+    # of a concrete execution. The plan says so explicitly when it
+    # is absent; execution still requires one (see /api/execute).
+    auth_ref = validate_auth_reference_optional(
+        payload.get("authorization_reference"))
     return {
         "target": target,
         "scope": scope,
         "actions": list(actions),
         "pipeline_profile": pipeline,
         "authorization_reference": auth_ref,
+        "authorization_note": (
+            "sin referencia de autorización"
+            if auth_ref is None else
+            "referencia de autorización: %s" % auth_ref),
     }
 
 
@@ -219,8 +245,12 @@ def build_command(plan, dry_run):
         "--action", *plan["actions"],
         "--pipeline-profile", plan["pipeline_profile"],
         "--confirm-written-authorization",
-        "--authorization-reference", plan["authorization_reference"],
     ]
+    # The reference is optional when planning; it is only added to
+    # the command when the user supplied one for this execution.
+    if plan.get("authorization_reference"):
+        command += ["--authorization-reference",
+                    plan["authorization_reference"]]
     if (REPO_ROOT / "scope.yaml").exists():
         command += ["--scope-file", "scope.yaml"]
     if dry_run:
@@ -257,8 +287,13 @@ def _load_moodle_tool():
     return module
 
 
-def validate_moodle_request(payload):
-    """Validate a moodle-sqli request; returns a clean dict (in memory)."""
+def validate_moodle_request(payload, require_auth=False):
+    """Validate a moodle-sqli request; returns a clean dict (in memory).
+
+    With require_auth=False (dry-run / planning) the reference is
+    optional: None means "sin referencia de autorización". With
+    require_auth=True it must be present.
+    """
     if not isinstance(payload, dict):
         raise ValidationError("el cuerpo debe ser un objeto JSON")
     tool = _load_moodle_tool()
@@ -275,7 +310,12 @@ def validate_moodle_request(payload):
             payload.get("max_chars", 50), "max-chars", 1, 50)
     except tool.ValidationError as exc:
         raise ValidationError(str(exc))
-    auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+    if require_auth:
+        auth_ref = validate_auth_reference(
+            payload.get("authorization_reference"))
+    else:
+        auth_ref = validate_auth_reference_optional(
+            payload.get("authorization_reference"))
     return {
         "base_url": base_url,
         "sesskey": sesskey,
@@ -349,7 +389,8 @@ def validate_engine_plan_request(payload):
             % (goal, ", ".join(sorted(engine.GOALS))))
     scope = payload.get("scope") or engine.GOALS[goal]["scope"]
     target = payload.get("target")
-    auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+    auth_ref = validate_auth_reference_optional(
+        payload.get("authorization_reference"))
     moodle_payload = payload.get("moodle")
     moodle_request = None
     moodle_info = None
@@ -651,9 +692,18 @@ class State:
     def __init__(self):
         self.lock = threading.Lock()
         self.dry_run = None  # {"hash": str, "plan": dict, "command": list}
+        self.pending_plan = None  # latest generated plan, approved or not
         self.moodle_dry_run = None  # {"hash": str, "request": dict, "command": list}
         self.engine_plan = None  # {"hash": str, "plan": dict, "moodle_request": dict|None}
         self.process = None
+
+    def set_pending_plan(self, plan):
+        with self.lock:
+            self.pending_plan = plan
+
+    def get_pending_plan(self):
+        with self.lock:
+            return self.pending_plan
 
     def set_dry_run(self, plan, command):
         with self.lock:
@@ -834,9 +884,23 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 command = build_command(plan, dry_run=True)
                 result = run_cli(command, DRY_RUN_TIMEOUT)
-                if result["exit_code"] == 0:
+                approved = result["exit_code"] == 0
+                # Remember the plan even when the dry-run was not
+                # approved: the user may supply the reference at the
+                # confirm dialog and /api/execute will dry-run this
+                # exact plan with it before executing.
+                STATE.set_pending_plan(plan)
+                if approved:
                     # Only a successful dry-run approves the exact command.
                     STATE.set_dry_run(plan, command)
+                # Without a reference the CLI itself refuses even the
+                # dry-run (unless scope.yaml carries one): the plan
+                # is still returned as a scope measurement, saying so
+                # explicitly, and nothing is approved for execution.
+                needs_auth = (
+                    plan["authorization_reference"] is None
+                    and not approved
+                    and "autorizaci" in (result["stderr"] or "").lower())
                 self._send_json(200, {
                     "command_exact": command,
                     "command": " ".join(command),
@@ -845,30 +909,98 @@ class Handler(BaseHTTPRequestHandler):
                     "exit_code": result["exit_code"],
                     "manifest": result["manifest"],
                     "session_dir": result["session_dir"],
+                    "dry_run_approved": approved,
+                    "needs_authorization": needs_auth,
+                    "authorization_reference":
+                        plan["authorization_reference"],
+                    "authorization_note": plan["authorization_note"],
                 })
             elif path == "/api/execute":
                 payload = self._read_json()
                 if payload.get("confirm") is not True:
                     self._send_json(400, {"error": "falta confirm: true"})
                     return
-                auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+                # The reference is supplied per execution (at the
+                # confirm dialog). It may arrive only now: the exact
+                # command then changes, so it is dry-run first.
+                ref = validate_auth_reference_optional(
+                    payload.get("authorization_reference"))
                 approved = STATE.get_dry_run()
-                if approved is None:
-                    self._send_json(409, {"error": "sin dry-run previo: ejecuta /api/plan primero"})
-                    return
-                if approved["plan"]["authorization_reference"] != auth_ref:
-                    self._send_json(409, {"error": "la referencia de autorización no coincide con la del dry-run"})
-                    return
                 if not PENTESTX.is_file():
-                    self._send_json(500, {"error": "pentestx.py no encontrado en la raíz del repo"})
+                    self._send_json(500, {
+                        "error": "pentestx.py no encontrado en la raíz "
+                                 "del repo"})
                     return
-                command = build_command(approved["plan"], dry_run=False)
+                base_plan = None
+                if approved is not None:
+                    base_plan = approved["plan"]
+                    approved_ref = base_plan["authorization_reference"]
+                    if ref is None and approved_ref is None:
+                        # The dry-run already succeeded without a
+                        # reference: the CLI accepted it (scope.yaml
+                        # carries one). Execute that exact command.
+                        plan = base_plan
+                    elif ref is not None and ref == approved_ref:
+                        plan = base_plan
+                    elif ref is None:
+                        # The CLI requires a reference even for the
+                        # dry-run, so execution without one is refused.
+                        self._send_json(409, {
+                            "error": "se requiere referencia de "
+                                     "autorización escrita para ejecutar"})
+                        return
+                    else:
+                        base_plan = dict(base_plan,
+                                         authorization_reference=ref)
+                else:
+                    # No approved dry-run yet (e.g. the plan was
+                    # generated without a reference and the CLI
+                    # refused its dry-run): use the latest generated
+                    # plan and dry-run it with the reference supplied
+                    # now, before executing.
+                    base_plan = STATE.get_pending_plan()
+                    if base_plan is None:
+                        self._send_json(409, {
+                            "error": "sin dry-run previo: ejecuta "
+                                     "/api/plan primero"})
+                        return
+                    if ref is None:
+                        self._send_json(409, {
+                            "error": "se requiere referencia de "
+                                     "autorización escrita para ejecutar"})
+                        return
+                    base_plan = dict(base_plan,
+                                     authorization_reference=ref)
+                if approved is None or (
+                        ref is not None
+                        and ref != approved["plan"]["authorization_reference"]):
+                    plan = base_plan
+                    command = build_command(plan, dry_run=True)
+                    result = run_cli(command, DRY_RUN_TIMEOUT)
+                    if result["exit_code"] != 0:
+                        self._send_json(200, {
+                            "dry_run_approved": False,
+                            "needs_authorization": True,
+                            "command_exact": command,
+                            "command": " ".join(command),
+                            "stdout": result["stdout"],
+                            "stderr": result["stderr"],
+                            "exit_code": result["exit_code"],
+                            "error": "dry-run con esa referencia "
+                                     "rechazado por la CLI; no se "
+                                     "ejecutó nada",
+                        })
+                        return
+                    STATE.set_dry_run(plan, command)
+                command = build_command(plan, dry_run=False)
                 if command_hash(command) != command_hash(
-                        build_command(approved["plan"], dry_run=True)[:-1]):
-                    self._send_json(409, {"error": "el comando cambió tras el dry-run"})
+                        build_command(plan, dry_run=True)[:-1]):
+                    self._send_json(409, {
+                        "error": "el comando cambió tras el dry-run"})
                     return
                 result = run_cli(command, EXECUTE_TIMEOUT)
                 self._send_json(200, {
+                    "dry_run_approved": True,
                     "command_exact": command,
                     "command": " ".join(command),
                     "stdout": result["stdout"],
@@ -876,6 +1008,8 @@ class Handler(BaseHTTPRequestHandler):
                     "exit_code": result["exit_code"],
                     "session_dir": result["session_dir"],
                     "manifest": result["manifest"],
+                    "authorization_reference":
+                        plan["authorization_reference"],
                 })
             elif path == "/api/tools/moodle-sqli/dry-run":
                 # Validates and shows the exact payloads; sends nothing.
@@ -900,7 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
                 if payload.get("confirm") is not True:
                     self._send_json(400, {"error": "falta confirm: true"})
                     return
-                auth_ref = validate_auth_reference(
+                ref = validate_auth_reference_optional(
                     payload.get("authorization_reference"))
                 approved = STATE.get_moodle_dry_run()
                 if approved is None:
@@ -908,12 +1042,39 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "sin dry-run previo: ejecuta "
                                  "/api/tools/moodle-sqli/dry-run primero"})
                     return
-                if approved["request"]["authorization_reference"] != auth_ref:
+                approved_ref = approved["request"]["authorization_reference"]
+                if ref is None and approved_ref is None:
+                    # The tool requires a reference to execute (its
+                    # dry-run does not). Refused, clearly.
+                    self._send_json(409, {
+                        "error": "se requiere referencia de autorización "
+                                 "escrita para ejecutar"})
+                    return
+                if ref is None:
                     self._send_json(409, {
                         "error": "la referencia de autorización no coincide "
                                  "con la del dry-run"})
                     return
-                command = build_moodle_command(approved["request"], dry_run=False)
+                if ref != approved_ref:
+                    # Reference supplied only now: dry-run the exact
+                    # command with it first, then execute it.
+                    request = dict(approved["request"],
+                                   authorization_reference=ref)
+                    command = build_moodle_command(request, dry_run=True)
+                    result = _run_process(command, 60)
+                    if result["exit_code"] != 0:
+                        self._send_json(200, {
+                            "dry_run_approved": False,
+                            "exit_code": result["exit_code"],
+                            "stderr": result["stderr"],
+                            "error": "dry-run con esa referencia "
+                                     "rechazado; no se ejecutó nada",
+                        })
+                        return
+                    STATE.set_moodle_dry_run(request, command)
+                    approved = {"request": request, "command": command}
+                command = build_moodle_command(
+                    approved["request"], dry_run=False)
                 if command_hash(command) != command_hash(
                         build_moodle_command(
                             approved["request"], dry_run=True)[:-1]):
@@ -923,6 +1084,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = _run_process(command, EXECUTE_TIMEOUT)
                 data = _parse_tool_json(result["stdout"])
                 self._send_json(200, {
+                    "dry_run_approved": True,
                     "exit_code": result["exit_code"],
                     "stderr": result["stderr"],
                     "result": data,
@@ -942,7 +1104,7 @@ class Handler(BaseHTTPRequestHandler):
                 if payload.get("confirm") is not True:
                     self._send_json(400, {"error": "falta confirm: true"})
                     return
-                auth_ref = validate_auth_reference(
+                ref = validate_auth_reference_optional(
                     payload.get("authorization_reference"))
                 approved = STATE.get_engine_plan()
                 if approved is None:
@@ -950,16 +1112,44 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "sin plan aprobado: ejecuta "
                                  "/api/engine/plan primero"})
                     return
-                if (approved["plan"]["authorization_reference"]
-                        != auth_ref):
-                    self._send_json(409, {
-                        "error": "la referencia de autorización no coincide "
-                                 "con la del plan aprobado"})
-                    return
                 if STATE.process is not None:
                     self._send_json(409, {
                         "error": "ya hay una ejecución en curso"})
                     return
+                plan_ref = approved["plan"]["authorization_reference"]
+                if ref is None and plan_ref is None:
+                    # Planning without a reference is only a scope
+                    # measurement; the CLI requires a reference even
+                    # for the dry-run, so execution is refused.
+                    self._send_json(409, {
+                        "error": "se requiere referencia de autorización "
+                                 "escrita para ejecutar"})
+                    return
+                if ref is None or (plan_ref is not None and ref != plan_ref):
+                    self._send_json(409, {
+                        "error": "la referencia de autorización no coincide "
+                                 "con la del plan aprobado"})
+                    return
+                if plan_ref is None:
+                    # Reference supplied only now: rebuild the
+                    # approved plan with it (same goal, target,
+                    # scope and steps; only the reference changes)
+                    # and store it before running.
+                    engine = _load_engine()
+                    plan = dict(approved["plan"],
+                                authorization_reference=ref,
+                                authorization_note=(
+                                    "referencia de autorización: %s" % ref))
+                    for step in plan["steps"]:
+                        step["dry_run_command"] = (
+                            engine.build_dry_run_command(plan, step))
+                    moodle_request = approved.get("moodle_request")
+                    if moodle_request is not None:
+                        moodle_request = dict(
+                            moodle_request, authorization_reference=ref)
+                    STATE.set_engine_plan(plan, moodle_request)
+                    approved = {"plan": plan,
+                                "moodle_request": moodle_request}
                 result = run_engine_plan(approved)
                 self._send_json(200, result)
             elif path == "/api/stop":

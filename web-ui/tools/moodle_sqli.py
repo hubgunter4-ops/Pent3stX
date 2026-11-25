@@ -340,7 +340,13 @@ def extract_value(client, column, max_chars, log):
 
 
 def build_command(request, dry_run):
-    """The exact, fixed CLI argument list for a validated request."""
+    """The exact, fixed CLI argument list for a validated request.
+
+    ``--authorization-reference`` only appears when the request
+    carries one: the reference is optional when planning/measuring
+    the scope, and mandatory to execute (the tool itself requires
+    it plus --confirm-written-authorization before running).
+    """
     command = [
         sys.executable,
         str(TOOL_DIR / "moodle_sqli.py"),
@@ -352,8 +358,10 @@ def build_command(request, dry_run):
         "--timeout", str(request["timeout"]),
         "--max-chars", str(request["max_chars"]),
         "--confirm-written-authorization",
-        "--authorization-reference", request["authorization_reference"],
     ]
+    if request.get("authorization_reference"):
+        command += ["--authorization-reference",
+                    request["authorization_reference"]]
     if dry_run:
         command.append("--dry-run")
     return command

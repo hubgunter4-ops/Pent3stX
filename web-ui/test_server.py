@@ -57,11 +57,21 @@ class TestValidatePlan(unittest.TestCase):
         self.assertEqual(plan["target"], "contaia.site")
         self.assertEqual(plan["pipeline_profile"], "with_owasp")
 
-    def test_missing_authorization(self):
-        with self.assertRaises(server.ValidationError):
-            server.validate_plan(base_plan(authorization_reference=""))
-        with self.assertRaises(server.ValidationError):
-            server.validate_plan(base_plan(authorization_reference=None))
+    def test_authorization_optional_when_planning(self):
+        # Sin referencia el plan es una medición del scope: dice
+        # explícitamente "sin referencia de autorización" y nunca
+        # inventa una. La ejecución real sí la exige (la CLI la pide
+        # incluso para el dry-run, salvo que scope.yaml ya tenga una).
+        for ref in (None, "", "   "):
+            plan = server.validate_plan(base_plan(authorization_reference=ref))
+            self.assertIsNone(plan["authorization_reference"])
+            self.assertEqual(plan["authorization_note"],
+                             "sin referencia de autorización")
+        plan = server.validate_plan(base_plan())
+        self.assertEqual(plan["authorization_reference"],
+                         "docs/AUTORIZACION-contaia.md")
+        self.assertIn("docs/AUTORIZACION-contaia.md",
+                      plan["authorization_note"])
 
     def test_bad_action(self):
         with self.assertRaises(server.ValidationError):
@@ -108,6 +118,18 @@ class TestBuildCommand(unittest.TestCase):
         self.assertEqual(execute, [a for a in command if a != "--dry-run"])
         self.assertNotEqual(server.command_hash(command), server.command_hash(execute))
 
+    def test_command_without_reference(self):
+        # Plan sin referencia (medición del scope): el comando no
+        # lleva --authorization-reference y nunca inventa una.
+        plan = server.validate_plan(base_plan(authorization_reference=None))
+        command = server.build_command(plan, dry_run=True)
+        self.assertIn("--dry-run", command)
+        self.assertIn("--confirm-written-authorization", command)
+        self.assertNotIn("--authorization-reference", command)
+        self.assertNotIn(None, command)
+        execute = server.build_command(plan, dry_run=False)
+        self.assertEqual(execute, [a for a in command if a != "--dry-run"])
+
     def test_auth_reference_validation(self):
         self.assertEqual(
             server.validate_auth_reference("docs/AUTORIZACION-contaia.md"),
@@ -115,6 +137,19 @@ class TestBuildCommand(unittest.TestCase):
         for bad in ("", "a; rm -rf /", "--flag", "../etc/passwd", "a b"):
             with self.subTest(bad=bad):
                 self.assertRaises(server.ValidationError, server.validate_auth_reference, bad)
+
+    def test_auth_reference_optional(self):
+        # Ausente o vacía: None, sin inventar valor. Presente: token seguro.
+        self.assertIsNone(server.validate_auth_reference_optional(None))
+        self.assertIsNone(server.validate_auth_reference_optional(""))
+        self.assertIsNone(server.validate_auth_reference_optional("   "))
+        self.assertEqual(
+            server.validate_auth_reference_optional("docs/AUTORIZACION-contaia.md"),
+            "docs/AUTORIZACION-contaia.md")
+        for bad in ("a; rm -rf /", "--flag", "../etc/passwd", "a b"):
+            with self.subTest(bad=bad):
+                self.assertRaises(server.ValidationError,
+                                  server.validate_auth_reference_optional, bad)
 
 
 class TestSessionName(unittest.TestCase):

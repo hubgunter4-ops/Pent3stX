@@ -19,6 +19,12 @@ Guardrails (ver DESIGN.md §7):
 * acciones y pipelines solo de las allowlists existentes;
 * sin RCE, sin escalada, sin escritura en la BD, sin herramientas
   fuera de la allowlist;
+* la referencia de autorización es opcional al planificar: sirve
+  para delimitar/registrar el scope de una ejecución concreta y
+  nunca se inventa. Un plan sin referencia dice explícitamente
+  "sin referencia de autorización"; la ejecución real sí la exige
+  (la CLI la pide incluso para el dry-run, salvo que scope.yaml
+  ya tenga una);
 * los pasos Moodle nunca extraen ``password``;
 * la sesskey y la cookie nunca aparecen en claro en un plan
   generado: el comando de muestra las redacta.
@@ -323,6 +329,19 @@ def validate_auth_reference(ref):
     return value
 
 
+def validate_auth_reference_optional(ref):
+    """Referencia opcional por ejecución: None si viene ausente o
+    vacía (el plan dirá "sin referencia de autorización"); si viene,
+    debe ser un token seguro. Nunca inventa un valor."""
+    if ref is None:
+        return None
+    if not isinstance(ref, str):
+        raise ValidationError("authorization_reference debe ser texto")
+    if not ref.strip():
+        return None
+    return validate_auth_reference(ref)
+
+
 def validate_plan_structure(plan):
     """Un plan generado debe cumplir los límites estructurales."""
     if not isinstance(plan, dict):
@@ -368,8 +387,12 @@ def build_pentestx_command(plan, step, dry_run=True):
         "--action", step["action"],
         "--pipeline-profile", plan["pipeline_profile"],
         "--confirm-written-authorization",
-        "--authorization-reference", plan["authorization_reference"],
     ]
+    # La referencia es opcional al planificar: solo se añade al
+    # comando si el usuario la aportó para esta ejecución.
+    if plan.get("authorization_reference"):
+        command += ["--authorization-reference",
+                    plan["authorization_reference"]]
     if (REPO_ROOT / "scope.yaml").exists():
         command += ["--scope-file", "scope.yaml"]
     if dry_run:
@@ -400,8 +423,10 @@ def build_moodle_command(plan, step, dry_run=True):
         "--timeout", "15",
         "--max-chars", max_chars,
         "--confirm-written-authorization",
-        "--authorization-reference", plan["authorization_reference"],
     ]
+    if plan.get("authorization_reference"):
+        command += ["--authorization-reference",
+                    plan["authorization_reference"]]
     if dry_run:
         command.append("--dry-run")
     return command
@@ -477,9 +502,16 @@ def check_preconditions(step, context):
 # -- generación del plan -----------------------------------------------
 
 
-def generate_plan(goal, target, scope, authorization_reference,
+def generate_plan(goal, target, scope, authorization_reference=None,
                   mapping=None, moodle=None):
     """Genera el plan de un goal sin ejecutar nada.
+
+    ``authorization_reference`` es opcional: sirve para
+    delimitar/registrar el scope de una ejecución concreta. Si no
+    se aporta, el plan lleva ``authorization_reference: None`` y la
+    nota "sin referencia de autorización" (nunca se inventa una).
+    La ejecución real sí exige una referencia (la CLI la pide
+    incluso para el dry-run, salvo que scope.yaml ya tenga una).
 
     ``mapping``: {"tools_available": {"nmap": bool, ...},
     "sessions": [...], "findings": int} (todo opcional).
@@ -492,7 +524,7 @@ def generate_plan(goal, target, scope, authorization_reference,
             % (goal, ", ".join(sorted(GOALS))))
     spec = GOALS[goal]
     target = validate_target(target)
-    auth_ref = validate_auth_reference(authorization_reference)
+    auth_ref = validate_auth_reference_optional(authorization_reference)
     if scope not in ALLOWED_SCOPES:
         raise ValidationError("scope debe ser passive o active")
     if scope != spec["scope"]:
@@ -518,6 +550,10 @@ def generate_plan(goal, target, scope, authorization_reference,
         "scope": scope,
         "pipeline_profile": pipeline,
         "authorization_reference": auth_ref,
+        "authorization_note": (
+            "sin referencia de autorización"
+            if auth_ref is None else
+            "referencia de autorización: %s" % auth_ref),
         "warnings": [],
         "steps": [],
     }
