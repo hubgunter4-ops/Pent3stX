@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pent3stX Workbench — Design Option 1 — Authorized Security Assessment (Read-Only / Authorized Assessment Only)</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="workbench" id="workbench">
+
+  <!-- Title bar -->
+  <header class="titlebar">
+    <span class="titlebar-text">Pent3stX Workbench — Design Option 1 — Authorized Security Assessment (Read-Only / Authorized Assessment Only)</span>
+    <span class="window-controls">
+      <button type="button" class="win-btn" data-win="min" title="Minimize" aria-label="Minimize">—</button>
+      <button type="button" class="win-btn" data-win="max" title="Maximize" aria-label="Maximize">▢</button>
+      <button type="button" class="win-btn win-close" data-win="close" title="Close" aria-label="Close">✕</button>
+    </span>
+  </header>
+
+  <!-- Menu bar -->
+  <nav class="menubar" aria-label="Main menu">
+    <div class="menu" data-menu="file"><button type="button" class="menu-btn">File</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="new">New session</button>
+        <button type="button" data-action="open">Open…</button>
+        <button type="button" data-action="save">Save</button>
+        <button type="button" data-action="export">Export report…</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="edit"><button type="button" class="menu-btn">Edit</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="copy-plan">Copy plan summary</button>
+        <button type="button" data-action="clear-console">Clear console</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="view"><button type="button" class="menu-btn">View</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="toggle-console">Toggle terminal console</button>
+        <button type="button" data-action="toggle-inspector">Toggle inspector</button>
+        <button type="button" data-action="toggle-map">Toggle session map</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="tools"><button type="button" class="menu-btn">Tools</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="scan">Scan (selected phase)</button>
+        <button type="button" data-action="analyze-ports">Analyze ports</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="assessments"><button type="button" class="menu-btn">Assessments</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="show-plan">Show plan overview</button>
+        <button type="button" data-action="show-findings">Show findings</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="plugins"><button type="button" class="menu-btn">Plugins</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="plugins-none">No plugins loaded (read-only)</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="window"><button type="button" class="menu-btn">Window</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="reset-layout">Reset layout</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="help"><button type="button" class="menu-btn">Help</button>
+      <div class="menu-drop" role="menu">
+        <button type="button" data-action="about">About Pent3stX Workbench</button>
+        <button type="button" data-action="authorized-note">Authorized use note</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Toolbar -->
+  <div class="toolbar" role="toolbar" aria-label="Actions">
+    <button type="button" class="tool-btn" data-action="new"><span class="tool-icon">＋</span><span>New</span></button>
+    <button type="button" class="tool-btn" data-action="open"><span class="tool-icon">🗀</span><span>Open</span></button>
+    <button type="button" class="tool-btn tool-start" data-action="start"><span class="tool-icon">▶</span><span>Start</span></button>
+    <button type="button" class="tool-btn" data-action="pause"><span class="tool-icon">❚❚ ■ ■</span><span>Pause</span></button>
+    <button type="button" class="tool-btn" data-action="scan"><span class="tool-icon">◍</span><span>Scan</span></button>
+    <button type="button" class="tool-btn" data-action="import"><span class="tool-icon">⬇</span><span>Import</span></button>
+    <button type="button" class="tool-btn" data-action="export"><span class="tool-icon">⬆</span><span>Export</span></button>
+    <button type="button" class="tool-btn" data-action="save"><span class="tool-icon">💾</span><span>Save</span></button>
+    <button type="button" class="tool-btn" data-action="config"><span class="tool-icon">⚙</span><span>Config</span></button>
+    <button type="button" class="tool-btn tool-collapse" data-action="toggle-inspector" title="Collapse inspector">«</button>
+    <span class="authorized-badge">Authorized • Assessment Only</span>
+  </div>
+
+  <!-- Main area -->
+  <main class="main">
+    <!-- Left: operations tree -->
+    <aside class="panel left" id="leftPanel" aria-label="Operations and phases">
+      <div class="panel-title"><button type="button" class="tree-toggle" data-action="toggle-tree">OPERATIONS • PHASES ⌄</button></div>
+      <ul class="tree" id="phaseTree">
+        <li><button type="button" class="phase" data-phase="passive">− passive</button>
+          <ul>
+            <li><button type="button" class="phase sub" data-phase="discovery">− discovery</button></li>
+            <li><button type="button" class="phase sub" data-phase="passive-recon">− passive-recon</button></li>
+          </ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="active">active</button>
+          <ul><li><button type="button" class="phase sub" data-phase="host-probe">− host-probe</button></li></ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="web">web</button>
+          <ul><li><button type="button" class="phase sub" data-phase="crawl">− crawl</button></li></ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="ports">ports</button>
+          <ul><li><button type="button" class="phase sub" data-phase="portscan">− portscan</button></li></ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="vuln">vuln</button>
+          <ul><li><button type="button" class="phase sub" data-phase="vuln-scan">− vuln-scan</button></li></ul>
+        </li>
+        <li><button type="button" class="phase selected" data-phase="owasp_web">− owasp_web</button>
+          <ul><li><button type="button" class="phase sub" data-phase="owasp-zap">− owasp-zap</button></li></ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="correlate">correlate</button>
+          <ul><li><button type="button" class="phase sub" data-phase="correlation">− correlation</button></li></ul>
+        </li>
+        <li><button type="button" class="phase" data-phase="report">report</button>
+          <ul><li><button type="button" class="phase sub" data-phase="generate-report">− generate-report</button></li></ul>
+        </li>
+      </ul>
+      <div class="left-footer">Profiles: 3 active • Ruleset: OWASP v4</div>
+    </aside>
+
+    <!-- Center -->
+    <section class="panel center" aria-label="Session">
+      <div class="center-tabs" role="tablist">
+        <button type="button" class="center-tab active" data-center-tab="map" role="tab" aria-selected="true">⤧ Session Map</button>
+        <button type="button" class="center-tab" data-center-tab="plan" role="tab" aria-selected="false">▦ Plan Overview</button>
+      </div>
+
+      <div class="map-view" id="mapView">
+        <div class="map-header">Session: SA-2024-011 | Map View • 4 Hosts • 3 Services • Read-Only</div>
+        <div class="map" id="sessionMap" aria-label="Session map">
+          <svg class="map-links" viewBox="0 0 600 300" preserveAspectRatio="none" aria-hidden="true">
+            <line x1="300" y1="150" x2="120" y2="70"/><line x1="300" y1="150" x2="470" y2="70"/>
+            <line x1="300" y1="150" x2="140" y2="220"/><line x1="300" y1="150" x2="480" y2="200"/>
+            <line x1="120" y1="70" x2="470" y2="70"/><line x1="140" y1="220" x2="480" y2="200"/>
+          </svg>
+          <button type="button" class="node" style="left:16%;top:18%" data-host="srv-web-01">srv-web-01 (10.10.50.10) •<br>http:80</button>
+          <button type="button" class="node" style="left:62%;top:16%" data-host="srv-api-02">srv-api-02 (10.10.50.11)<br>• api:443</button>
+          <button type="button" class="node" style="left:18%;top:62%" data-host="db-01">db-01 (10.10.50.20) •<br>postgres:5432</button>
+          <button type="button" class="node" style="left:60%;top:58%" data-host="fw-gateway">fw-gateway (10.10.50.1)<br>firewall</button>
+          <span class="node-hub" title="Session hub"></span>
+          <span class="node-dot" style="left:44%;top:30%"></span>
+          <span class="node-dot" style="left:52%;top:64%"></span>
+          <span class="node-dot yellow" style="left:58%;top:78%"></span>
+          <span class="node-dot yellow" style="left:66%;top:74%"></span>
+          <div class="map-scope">Authorized Scope • Confirmed by Client</div>
+        </div>
+      </div>
+
+      <div class="plan-view" id="planView" hidden>
+        <div class="map-header">Session: SA-2024-011 | Plan Overview • Read-Only</div>
+        <p class="plan-note">Plan: passive → active → OWASP Web Scan → correlation → report. Approved scope: 10.10.50.0/24. No step runs network traffic from this page; Start advances the local simulation only.</p>
+      </div>
+
+      <table class="tasks" aria-label="Tasks">
+        <thead><tr><th>TASK</th><th>TARGET</th><th>STATUS</th><th>OWNER</th><th>ETA</th><th>RISK</th><th>NOTES</th></tr></thead>
+        <tbody>
+          <tr><td>Passive Recon</td><td>10.10.50.0/24</td><td><span class="badge done">Completed</span></td><td>analyst-01</td><td>2024-11-25 13:20</td><td>Low</td><td>No active probes, passive DNS</td></tr>
+          <tr><td>Portscan (TCP)</td><td>10.10.50.10, .11, .20</td><td><span class="badge done">Completed</span></td><td>analyst-01</td><td>2024-11-25 13:45</td><td>Low</td><td>22,80,443,5432 open</td></tr>
+          <tr><td>OWASP Web Scan</td><td>srv-web-01:80</td><td><span class="badge running" id="owaspStatus">Running</span></td><td>analyst-02</td><td>2024-11-25 14:30</td><td>Med</td><td id="owaspNote">In progress, 12 checks</td></tr>
+          <tr><td>Correlation</td><td>All Hosts</td><td><span class="badge pending" id="corrStatus">Pending</span></td><td>—</td><td>—</td><td>—</td><td>Await OWASP results</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Right: inspector -->
+    <aside class="panel right" id="rightPanel" aria-label="Inspector">
+      <div class="panel-title">INSPECTOR</div>
+      <div class="inspector-tabs" role="tablist">
+        <button type="button" class="insp-tab active" data-insp-tab="pipeline" role="tab" aria-selected="true">Pipeline</button>
+        <button type="button" class="insp-tab" data-insp-tab="profiles" role="tab" aria-selected="false">Profiles</button>
+        <button type="button" class="insp-tab" data-insp-tab="findings" role="tab" aria-selected="false">Findings</button>
+      </div>
+
+      <div class="insp-pane" id="pane-pipeline">
+        <h2>PIPELINE STATUS</h2>
+        <ol class="pipeline">
+          <li><span class="step">step1</span> <span class="dot-ok">○</span> Passive → <strong>Completed</strong><br><span class="step-time">13:20 UTC</span></li>
+          <li><span class="step">step2</span> <span class="dot-ok">○</span> Active → <strong>Completed</strong><br><span class="step-time">13:45 UTC</span></li>
+          <li><span class="step">step3</span> <span class="dot-run">◐</span> Web Scan → <strong id="pipelineState">Running (<span id="pipelinePct">48</span>%)</strong>
+            <span class="progress"><span class="progress-fill" id="progressFill" style="width:48%"></span></span>
+            <span class="step-time">OWASP ZAP • <span id="checkCount">12</span>/25 checks</span>
+          </li>
+        </ol>
+      </div>
+
+      <div class="insp-pane" id="pane-profiles" hidden>
+        <h2>PROFILES</h2>
+        <p><strong>Profile:</strong> OWASP Web Standard v4<br>Enabled</p>
+        <p><strong>Profile:</strong> Portscan Default<br>Enabled</p>
+        <p class="muted">Profiles: 3 active • Ruleset: OWASP v4</p>
+      </div>
+
+      <div class="insp-pane" id="pane-findings" hidden>
+        <h2>FINDINGS (7)</h2>
+        <ul class="findings">
+          <li><strong>[MED] Outdated Server Header</strong><br>srv-web-01:80 • CWE-1008 • Risk: Medium</li>
+          <li><strong>[LOW] TLS 1.0 Supported</strong><br>srv-api-02:443 • CWE-326 • Risk: Low</li>
+          <li><strong>[INFO] Open DB Port Detected</strong><br>db-01:5432 • Internal only • Risk: Info</li>
+        </ul>
+        <p class="muted">Showing 3 of 7 findings. The other 4 are not listed in the design image.</p>
+      </div>
+
+      <div class="insp-always">
+        <h2>PROFILES</h2>
+        <p><strong>Profile:</strong> OWASP Web Standard v4<br>Enabled</p>
+        <p><strong>Profile:</strong> Portscan Default<br>Enabled</p>
+        <h2>FINDINGS (7)</h2>
+        <ul class="findings">
+          <li><strong>[MED] Outdated Server Header</strong><br>srv-web-01:80 • CWE-1008 • Risk: Medium</li>
+          <li><strong>[LOW] TLS 1.0 Supported</strong><br>srv-api-02:443 • CWE-326 • Risk: Low</li>
+          <li><strong>[INFO] Open DB Port Detected</strong><br>db-01:5432 • Internal only • Risk: Info</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Terminal console (fixed at bottom) -->
+  <section class="console" id="consolePanel" aria-label="Terminal console">
+    <div class="console-header">
+      <span>🖥 TERMINAL CONSOLE • Log Output</span>
+      <span class="console-actions">
+        <button type="button" data-action="clear-console" title="Clear console">Clear</button>
+        <button type="button" data-action="toggle-console" title="Collapse console" aria-label="Collapse console">▭</button>
+      </span>
+    </div>
+    <pre class="console-body" id="consoleBody" aria-live="polite">[2024-11-25 14:30:12] [+] Initializing OWASP scan on srv-web-01:80 ..
+[2024-11-25 14:30:15] [+] Loading profile: OWASP Web Standard v4
+[2024-11-25 14:30:18] [*] Phase: Passive rules loaded (42 rules)
+[2024-11-25 14:30:22] [*] Running check 12/25: Header Analysis..
+[2024-11-25 14:30:24] [!!] Note: This is an authorized assessment. Do not perform actions outside approved scope.</pre>
+    <div class="status-green">Ready | Authorized Assessment Only — Approved Scope: 10.10.50.0/24</div>
+  </section>
+
+  <!-- Bottom status bar -->
+  <footer class="statusbar">
+    <span>Session: SA-2024-011 | Hosts: 4 | Services: 5 | Findings: 7 | Warnings: 1</span>
+    <span>User: sec-analyst | 2024-11-25 14:32:08 UTC | v1.2.0-design1</span>
+  </footer>
+</div>
+
+<!-- Config dialog -->
+<dialog id="configDialog" class="dialog">
+  <form method="dialog">
+    <h2>Config — read-only session</h2>
+    <p>Session: SA-2024-011<br>Approved scope: 10.10.50.0/24<br>Ruleset: OWASP v4 • Profiles: 3 active</p>
+    <label><input type="checkbox" id="optMotion"> Reduce motion (disable scanline / pulse animations)</label>
+    <label><input type="checkbox" id="optConsole" checked> Keep terminal console fixed at the bottom</label>
+    <p class="muted">This page never contacts the network. Start / Pause only advance the local simulation.</p>
+    <button type="submit" class="dialog-btn">Close</button>
+  </form>
+</dialog>
+
+<!-- About dialog -->
+<dialog id="aboutDialog" class="dialog">
+  <form method="dialog">
+    <h2>About Pent3stX Workbench</h2>
+    <p>Design Option 1 — Ettercap classic style. Authorized security assessment, read-only. v1.2.0-design1.</p>
+    <p><strong>Authorized use only.</strong> Do not perform actions outside the approved scope (10.10.50.0/24).</p>
+    <button type="submit" class="dialog-btn">Close</button>
+  </form>
+</dialog>
+
+<input type="file" id="fileInput" hidden>
+<script src="app.js"></script>
+</body>
+</html>
