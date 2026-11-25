@@ -29,6 +29,7 @@
     plan: null,
     sessionDir: null,
     moodleRequest: null,
+    enginePlan: null,
     config: {
       target: "contaia.site",
       scope: "passive",
@@ -99,6 +100,10 @@
     }
     setStartEnabled(state.connected && state.pentestxPresent && !state.running);
     document.querySelectorAll('[data-action="moodle-sqli"]').forEach(function (b) {
+      b.disabled = !(state.connected && !state.running);
+      b.classList.toggle("disabled", b.disabled);
+    });
+    document.querySelectorAll('[data-action="engine-plan"]').forEach(function (b) {
       b.disabled = !(state.connected && !state.running);
       b.classList.toggle("disabled", b.disabled);
     });
@@ -378,6 +383,119 @@
     });
   }
 
+  /* -- Planning engine (web-ui/engine/engine.py) ----------------- */
+  /* The Moodle sesskey/cookie live only in the dialog fields and in
+     the plan request (memory); they are never saved to localStorage. */
+
+  function fillEngineForm() {
+    document.getElementById("engineGoal").value = "owasp_report";
+    document.getElementById("engineTarget").value = state.config.target;
+    document.getElementById("engineScope").value = state.config.scope;
+    document.getElementById("engineAuth").value = state.config.authorization_reference || "";
+    document.getElementById("engineMoodleBaseUrl").value = "http://127.0.0.1:8080/moodle";
+    document.getElementById("engineMoodleSesskey").value = "";
+    document.getElementById("engineMoodleCookie").value = "";
+    toggleEngineMoodleFields();
+  }
+
+  function toggleEngineMoodleFields() {
+    document.getElementById("engineMoodleFields").hidden =
+      document.getElementById("engineGoal").value !== "moodle_sqli_confirm";
+  }
+
+  function renderEnginePlan(plan) {
+    state.enginePlan = plan;
+    var steps = document.getElementById("pipelineSteps");
+    steps.innerHTML = "";
+    (plan.steps || []).forEach(function (step, i) {
+      var li = document.createElement("li");
+      li.textContent = "step" + (i + 1) + " " + step.id + " (" + step.tool + ") → " + step.status +
+        (step.blocked_reason ? " (" + step.blocked_reason + ")" : "");
+      steps.appendChild(li);
+    });
+    document.getElementById("planNote").textContent =
+      "Plan del motor: goal " + plan.goal + " | Target: " + plan.target +
+      " | Scope: " + plan.scope + " | Pipeline: " + plan.pipeline_profile +
+      (plan.warnings && plan.warnings.length ? " | Avisos: " + plan.warnings.join("; ") : "") +
+      ". Confirma para ejecutar paso a paso.";
+    document.getElementById("mapHeader").textContent =
+      "Plan del motor aprobado | Goal: " + plan.goal + " | Sin ejecutar todavía";
+    showTab("plan");
+  }
+
+  function enginePlan() {
+    if (!state.connected) {
+      log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. El motor no simula nada.");
+      return;
+    }
+    var goal = document.getElementById("engineGoal").value;
+    var body = {
+      goal: goal,
+      target: document.getElementById("engineTarget").value.trim(),
+      scope: document.getElementById("engineScope").value,
+      authorization_reference: document.getElementById("engineAuth").value.trim()
+    };
+    if (goal === "moodle_sqli_confirm") {
+      body.moodle = {
+        base_url: document.getElementById("engineMoodleBaseUrl").value.trim(),
+        sesskey: document.getElementById("engineMoodleSesskey").value.trim(),
+        session_cookie: document.getElementById("engineMoodleCookie").value.trim()
+      };
+    }
+    log("[*] Motor: generando plan (" + goal + " sobre " + body.target + ")…");
+    api("/api/engine/plan", { method: "POST", body: body }, 30000).then(function (data) {
+      renderEnginePlan(data.plan);
+      log("[+] Plan del motor generado: " + data.plan.steps.length + " pasos.");
+      (data.plan.warnings || []).forEach(function (w) { log("[!] " + w); });
+      document.getElementById("engineConfirmPlan").textContent =
+        JSON.stringify(data.plan.steps.map(function (step) {
+          return { id: step.id, action: step.action, tool: step.tool,
+            status: step.status, dry_run_command: step.dry_run_command };
+        }), null, 2).slice(0, 4000);
+      document.getElementById("engineConfirmDialog").showModal();
+    }).catch(function (err) {
+      log("[!!] Plan del motor rechazado: " + err.message + ". No se ejecuta nada.");
+    });
+  }
+
+  function engineRun() {
+    if (state.running || !state.enginePlan) return;
+    state.running = true;
+    renderBackend();
+    log("[+] Ejecutando el plan del motor paso a paso… (Pause para detener)");
+    api("/api/engine/run", {
+      method: "POST",
+      body: { confirm: true, authorization_reference: state.enginePlan.authorization_reference }
+    }, 1800000).then(function (res) {
+      state.running = false;
+      renderBackend();
+      log("[+] Plan terminado: " + res.status + " | run " + res.run_id);
+      (res.steps || []).forEach(function (step) {
+        log("    " + step.id + " → " + step.status +
+          (step.reason ? " (" + step.reason + ")" : "") +
+          (step.session_dir ? " | sesión " + step.session_dir : ""));
+        if (step.stdout) logLines(step.stdout);
+        if (step.stderr) logLines(step.stderr);
+        if (step.result && step.result.results) {
+          Object.keys(step.result.results).forEach(function (k) {
+            log("    " + k + ": " + step.result.results[k]);
+          });
+        }
+      });
+      if (res.evidence_dir) log("[+] Evidencia: " + res.evidence_dir);
+      var last = (res.steps || []).filter(function (step) { return step.session_dir; }).pop();
+      if (last) {
+        state.sessionDir = last.session_dir;
+        loadFindings(last.session_dir);
+      }
+      loadSessions();
+    }).catch(function (err) {
+      state.running = false;
+      renderBackend();
+      log("[!!] Plan fallido o detenido: " + err.message);
+    });
+  }
+
   function resetSession() {
     state.plan = null;
     state.sessionDir = null;
@@ -563,6 +681,14 @@
       loadFindings(state.sessionDir);
       log("[*] Puertos: revisa los findings reales de la sesión " + state.sessionDir + " (sin escaneo nuevo).");
     },
+    "engine-plan": function () {
+      if (!state.connected) {
+        log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. El motor no se simula.");
+        return;
+      }
+      fillEngineForm();
+      document.getElementById("engineDialog").showModal();
+    },
     "moodle-sqli": function () {
       if (!state.connected) {
         log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. La sonda Moodle no se simula.");
@@ -653,6 +779,21 @@
       doExecute();
     } else {
       log("[*] Ejecución cancelada por el usuario. El dry-run sigue aprobado para ese comando exacto.");
+    }
+  });
+
+  document.getElementById("engineGoal").addEventListener("change", toggleEngineMoodleFields);
+
+  document.getElementById("engineForm").addEventListener("submit", function (ev) {
+    if (ev.submitter && ev.submitter.value === "cancel") return;
+    enginePlan();
+  });
+
+  document.getElementById("engineConfirmDialog").addEventListener("close", function () {
+    if (document.getElementById("engineConfirmDialog").returnValue === "confirm") {
+      engineRun();
+    } else {
+      log("[*] Plan del motor cancelado por el usuario. El plan sigue aprobado para ese goal exacto.");
     }
   });
 

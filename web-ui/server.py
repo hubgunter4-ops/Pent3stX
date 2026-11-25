@@ -25,6 +25,14 @@ the tool only ever talks to http://127.0.0.1:8080/moodle, never
 extracts the password hash, and the session cookie / sesskey are
 never written to disk or returned in API responses.
 
+And the rule-based planning engine in ``web-ui/engine/``
+(``/api/engine/goals``, ``/api/engine/plan`` and
+``/api/engine/run``): given a goal and the current mapping, it
+generates an ordered plan of steps without executing anything; the
+plan is then run step by step, checking each step's preconditions
+and dry-running its exact command first. See
+``web-ui/engine/DESIGN.md``.
+
 Run from the repository root::
 
     python3 web-ui/server.py
@@ -42,6 +50,7 @@ import ipaddress
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -56,19 +65,25 @@ REPO_ROOT = Path(os.environ.get("PENTESTX_ROOT", Path(__file__).resolve().parent
 WEB_UI_DIR = Path(__file__).resolve().parent
 TOOLS_DIR = WEB_UI_DIR / "tools"
 MOODLE_SQLI = TOOLS_DIR / "moodle_sqli.py"
+ENGINE_DIR = WEB_UI_DIR / "engine"
+ENGINE_MODULE = ENGINE_DIR / "engine.py"
 PENTESTX = REPO_ROOT / "pentestx.py"
 WORKSPACE_DIR = REPO_ROOT / "workspace"
 SESSIONS_DIR = WORKSPACE_DIR / "pentestx_sessions"
+ENGINE_RUNS_DIR = WORKSPACE_DIR / "engine_runs"
 
 ALLOWED_TARGETS = ("contaia.site", "127.0.0.1")
 ALLOWED_SCOPES = ("passive", "active")
 ALLOWED_ACTIONS = (
     "passive", "active", "web", "ports", "vuln", "owasp_web",
     "vulnerability", "correlate", "report", "correlated",
+    # "intrusive" es una acción válida de la CLI (ACTIVE_ACTIONS en
+    # pentestx.py); la usa el goal full_assessment del motor.
+    "intrusive",
 )
-# Only the bare "active" action is treated as active here; the CLI
-# itself enforces the rest (e.g. intrusive steps inside a pipeline).
-ACTIVE_ACTIONS = ("active",)
+# Acciones que exigen scope active; la CLI también las trata como
+# activas (ACTIVE_ACTIONS en pentestx.py).
+ACTIVE_ACTIONS = ("active", "intrusive")
 ALLOWED_PIPELINES = ("standard", "with_intrusive", "with_owasp", "full_web")
 # Pipelines whose steps include intrusive/active work.
 PIPELINES_NEEDING_ACTIVE_SCOPE = ("with_intrusive", "full_web")
@@ -217,6 +232,12 @@ def command_hash(command):
     return hashlib.sha256(json.dumps(command).encode("utf-8")).hexdigest()
 
 
+def engine_plan_hash(plan):
+    return hashlib.sha256(
+        json.dumps(plan, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 # -- Moodle SQLi tool (web-ui/tools/moodle_sqli.py) -------------------
 # Validation lives in the tool itself; the server loads it (by path,
 # never from an installed package) so there is a single definition
@@ -279,6 +300,300 @@ def _parse_tool_json(text):
         return None
 
 
+# -- Planning engine (web-ui/engine/engine.py) ----------------------
+# The planner itself is pure (no network, no disk): the server only
+# feeds it the current mapping and, for the Moodle goal, the session
+# the user provided. The sesskey / cookie only ever live in server
+# memory for the approved plan; they are never logged, never written
+# to disk by this server, and never returned in a response.
+
+def _load_engine():
+    if not ENGINE_MODULE.is_file():
+        raise ValidationError("engine.py no encontrado en web-ui/engine/")
+    spec = importlib.util.spec_from_file_location(
+        "pentestx_engine", ENGINE_MODULE)
+    if spec is None or spec.loader is None:
+        raise ValidationError("no se pudo cargar engine.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _current_mapping():
+    """Mapping the planner needs: installed tools + existing sessions."""
+    return {
+        "tools_available": {
+            "nmap": shutil.which("nmap") is not None,
+            "ffuf": shutil.which("ffuf") is not None,
+            "sqlmap": shutil.which("sqlmap") is not None,
+        },
+        "sessions": [s["name"] for s in list_sessions()],
+    }
+
+
+def validate_engine_plan_request(payload):
+    """Validate an /api/engine/plan payload; returns the approved plan.
+
+    The Moodle session is optional at plan time: without sesskey +
+    cookie the Moodle steps are generated as blocked (the plan says
+    so) instead of failing the request. A wrong base_url, though, is
+    a real error.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("el cuerpo debe ser un objeto JSON")
+    engine = _load_engine()
+    goal = payload.get("goal")
+    if not isinstance(goal, str) or goal not in engine.GOALS:
+        raise ValidationError(
+            "goal no permitido: %s (goals: %s)"
+            % (goal, ", ".join(sorted(engine.GOALS))))
+    scope = payload.get("scope") or engine.GOALS[goal]["scope"]
+    target = payload.get("target")
+    auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+    moodle_payload = payload.get("moodle")
+    moodle_request = None
+    moodle_info = None
+    if goal == "moodle_sqli_confirm":
+        if isinstance(moodle_payload, dict) and moodle_payload:
+            if (moodle_payload.get("base_url")
+                    and moodle_payload.get("base_url")
+                    != engine.MOODLE_BASE_URL):
+                raise ValidationError(
+                    "base-url no permitido: solo %s"
+                    % engine.MOODLE_BASE_URL)
+            try:
+                moodle_request = validate_moodle_request(
+                    dict(moodle_payload,
+                         # extract por defecto: database + username
+                         # (la UI del motor no lo pide; nunca password).
+                         extract=moodle_payload.get("extract") or [
+                             "database", "username"],
+                         authorization_reference=auth_ref))
+                moodle_info = {
+                    "base_url": moodle_request["base_url"],
+                    "sesskey_present": True,
+                    "cookie_present": True,
+                }
+            except ValidationError as exc:
+                # Missing sesskey/cookie: the plan is generated with
+                # the Moodle steps blocked; anything else is an error.
+                message = str(exc)
+                if "sesskey" in message or "session-cookie" in message:
+                    moodle_request = None
+                    moodle_info = None
+                else:
+                    raise
+    try:
+        plan = engine.generate_plan(
+            goal, target, scope, auth_ref,
+            mapping=_current_mapping(), moodle=moodle_info)
+    except engine.ValidationError as exc:
+        raise ValidationError(str(exc))
+    return {"plan": plan, "moodle_request": moodle_request}
+
+
+def _redact_plan(plan):
+    """A generated plan never contains secrets (the sample commands
+    redact them), but round-trip it so nothing else leaks either."""
+    return json.loads(json.dumps(plan, ensure_ascii=False))
+
+
+def _save_engine_run(run_id, plan, step_results, status):
+    """Evidence of an engine run: plan + per-step results, no secrets."""
+    directory = ENGINE_RUNS_DIR / run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {
+        "run_id": run_id,
+        "goal": plan["goal"],
+        "target": plan["target"],
+        "scope": plan["scope"],
+        "pipeline_profile": plan["pipeline_profile"],
+        "authorization_reference": plan["authorization_reference"],
+        "status": status,
+        "plan": _redact_plan(plan),
+        "steps": step_results,
+    }
+    (directory / "plan.json").write_text(
+        json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    return str(directory)
+
+
+def run_engine_plan(approved):
+    """Run an approved engine plan step by step.
+
+    Before each step, its preconditions are re-checked against the
+    results so far (via engine.replan); a step that may not run is
+    recorded as skipped/blocked with its reason, never executed.
+    Each pentestx step dry-runs its exact command first, then
+    executes it; each Moodle step does the same through the
+    moodle-sqli endpoints' own flow.
+    """
+    import time as _time
+
+    engine = _load_engine()
+    plan = approved["plan"]
+    moodle_request = approved.get("moodle_request")
+    run_id = _time.strftime("%Y%m%dT%H%M%SZ", _time.gmtime())
+    mapping = _current_mapping()
+    results = {}
+    step_results = []
+    live_plan = json.loads(json.dumps(plan, ensure_ascii=False))
+    stopped = False
+
+    def context():
+        return {
+            "tools_available": mapping["tools_available"],
+            "scope": plan["scope"],
+            "moodle_session": moodle_request is not None,
+            "results": results,
+        }
+
+    for step in live_plan["steps"]:
+        step_id = step["id"]
+        status = step.get("status")
+        if status in ("skipped_missing_dependency", "blocked"):
+            result = {
+                "id": step_id, "action": step["action"],
+                "tool": step["tool"], "status": status,
+                "reason": step.get("blocked_reason", ""),
+            }
+            results[step_id] = result
+            step_results.append(result)
+            continue
+        if stopped:
+            result = {
+                "id": step_id, "action": step["action"],
+                "tool": step["tool"], "status": "skipped",
+                "reason": "stopped: un paso anterior falló",
+            }
+            results[step_id] = result
+            step_results.append(result)
+            continue
+        # Re-plan with what is known so far; a step whose
+        # preconditions no longer hold is skipped, never executed.
+        live_plan = engine.replan(live_plan, results, context())
+        live_step = next(
+            s for s in live_plan["steps"] if s["id"] == step_id)
+        if live_step.get("status") != "pending":
+            result = {
+                "id": step_id, "action": step["action"],
+                "tool": step["tool"],
+                "status": live_step.get("status"),
+                "reason": live_step.get("blocked_reason", ""),
+            }
+            results[step_id] = result
+            step_results.append(result)
+            continue
+        if step["tool"] == "moodle_sqli":
+            result = _run_engine_moodle_step(
+                plan, step, moodle_request)
+        else:
+            result = _run_engine_pentestx_step(plan, step)
+        results[step_id] = result
+        step_results.append(result)
+        if result["status"] == "failed" and step.get("on_fail") == "stop":
+            stopped = True
+
+    if stopped:
+        status = "stopped"
+    elif any(r["status"] in ("failed", "skipped", "blocked",
+                             "skipped_missing_dependency")
+             for r in step_results):
+        status = "completed_with_warnings"
+    else:
+        status = "completed"
+    evidence_dir = _save_engine_run(run_id, live_plan, step_results, status)
+    return {
+        "run_id": run_id,
+        "goal": plan["goal"],
+        "status": status,
+        "evidence_dir": evidence_dir,
+        "steps": step_results,
+    }
+
+
+def _truncate(text, limit=4000):
+    text = text or ""
+    return text if len(text) <= limit else text[:limit] + "\n… (recortado)"
+
+
+def _run_engine_pentestx_step(plan, step):
+    """One pentestx step: dry-run of the exact command, then execute."""
+    engine = _load_engine()
+    dry = engine.build_pentestx_command(plan, step, dry_run=True)
+    result = run_cli(dry, DRY_RUN_TIMEOUT)
+    if result["exit_code"] != 0:
+        return {
+            "id": step["id"], "action": step["action"],
+            "tool": "pentestx", "status": "failed",
+            "exit_code": result["exit_code"],
+            "session_dir": result.get("session_dir"),
+            "stdout": _truncate(result["stdout"]),
+            "stderr": _truncate(result["stderr"]),
+            "reason": "dry-run rechazado por la CLI",
+        }
+    command = engine.build_pentestx_command(plan, step, dry_run=False)
+    result = run_cli(command, EXECUTE_TIMEOUT)
+    return {
+        "id": step["id"], "action": step["action"],
+        "tool": "pentestx",
+        "status": "completed" if result["exit_code"] == 0 else "failed",
+        "exit_code": result["exit_code"],
+        "session_dir": result.get("session_dir"),
+        "stdout": _truncate(result["stdout"]),
+        "stderr": _truncate(result["stderr"]),
+        "reason": "" if result["exit_code"] == 0
+                else "la CLI terminó con exit %d" % result["exit_code"],
+    }
+
+
+def _run_engine_moodle_step(plan, step, moodle_request):
+    """One Moodle step: dry-run, then run the tool (detect or extract).
+
+    The dry-run and run commands are rebuilt from the approved
+    request (in memory only); the plan's sample command is redacted
+    and is never executed.
+    """
+    if step["id"] == "moodle_detect":
+        request = dict(moodle_request, extract=["database"], max_chars=1)
+    else:
+        request = moodle_request
+    dry = build_moodle_command(request, dry_run=True)
+    result = _run_process(dry, 60)
+    if result["exit_code"] != 0:
+        return {
+            "id": step["id"], "action": step["action"],
+            "tool": "moodle_sqli", "status": "failed",
+            "exit_code": result["exit_code"],
+            "stdout": _truncate(result["stdout"]),
+            "stderr": _truncate(result["stderr"]),
+            "reason": "dry-run rechazado por la herramienta",
+        }
+    command = build_moodle_command(request, dry_run=False)
+    result = _run_process(command, EXECUTE_TIMEOUT)
+    data = _parse_tool_json(result["stdout"])
+    vulnerable = (data or {}).get("vulnerable")
+    status = "completed" if result["exit_code"] == 0 else "failed"
+    if step["id"] == "moodle_detect" and status == "completed":
+        # The detection only counts as completed if it actually
+        # confirmed the vulnerability; otherwise the extract step
+        # must not run (its precondition checks this).
+        status = "completed" if vulnerable is True else "failed"
+    return {
+        "id": step["id"], "action": step["action"],
+        "tool": "moodle_sqli", "status": status,
+        "exit_code": result["exit_code"],
+        "stdout": _truncate(result["stdout"]),
+        "stderr": _truncate(result["stderr"]),
+        "result": data,
+        "reason": "" if status == "completed"
+                else "la sonda no confirmó la vulnerabilidad"
+                if step["id"] == "moodle_detect"
+                else "la herramienta terminó con exit %d"
+                % result["exit_code"],
+    }
+
+
 def validate_session_name(name):
     """Return a safe session directory name, or raise ValidationError."""
     if not isinstance(name, str) or not _SESSION_NAME.fullmatch(name) or name in (".", ".."):
@@ -337,6 +652,7 @@ class State:
         self.lock = threading.Lock()
         self.dry_run = None  # {"hash": str, "plan": dict, "command": list}
         self.moodle_dry_run = None  # {"hash": str, "request": dict, "command": list}
+        self.engine_plan = None  # {"hash": str, "plan": dict, "moodle_request": dict|None}
         self.process = None
 
     def set_dry_run(self, plan, command):
@@ -358,6 +674,18 @@ class State:
     def get_moodle_dry_run(self):
         with self.lock:
             return self.moodle_dry_run
+
+    def set_engine_plan(self, plan, moodle_request):
+        with self.lock:
+            self.engine_plan = {
+                "hash": engine_plan_hash(plan),
+                "plan": plan,
+                "moodle_request": moodle_request,
+            }
+
+    def get_engine_plan(self):
+        with self.lock:
+            return self.engine_plan
 
     def set_process(self, proc):
         with self.lock:
@@ -469,6 +797,9 @@ class Handler(BaseHTTPRequestHandler):
                     "pentestx_present": PENTESTX.is_file(),
                     "repo_root": str(REPO_ROOT),
                 })
+            elif path == "/api/engine/goals":
+                engine = _load_engine()
+                self._send_json(200, {"goals": engine.list_goals()})
             elif path == "/api/sessions":
                 self._send_json(200, {"sessions": list_sessions()})
             elif path == "/api/findings":
@@ -596,6 +927,41 @@ class Handler(BaseHTTPRequestHandler):
                     "stderr": result["stderr"],
                     "result": data,
                 })
+            elif path == "/api/engine/plan":
+                # Generates the plan only; executes nothing.
+                payload = self._read_json()
+                approved = validate_engine_plan_request(payload)
+                plan = approved["plan"]
+                STATE.set_engine_plan(plan, approved["moodle_request"])
+                self._send_json(200, {
+                    "plan": _redact_plan(plan),
+                    "plan_hash": engine_plan_hash(plan),
+                })
+            elif path == "/api/engine/run":
+                payload = self._read_json()
+                if payload.get("confirm") is not True:
+                    self._send_json(400, {"error": "falta confirm: true"})
+                    return
+                auth_ref = validate_auth_reference(
+                    payload.get("authorization_reference"))
+                approved = STATE.get_engine_plan()
+                if approved is None:
+                    self._send_json(409, {
+                        "error": "sin plan aprobado: ejecuta "
+                                 "/api/engine/plan primero"})
+                    return
+                if (approved["plan"]["authorization_reference"]
+                        != auth_ref):
+                    self._send_json(409, {
+                        "error": "la referencia de autorización no coincide "
+                                 "con la del plan aprobado"})
+                    return
+                if STATE.process is not None:
+                    self._send_json(409, {
+                        "error": "ya hay una ejecución en curso"})
+                    return
+                result = run_engine_plan(approved)
+                self._send_json(200, result)
             elif path == "/api/stop":
                 stopped = STATE.stop_process()
                 self._send_json(200, {"stopped": stopped})

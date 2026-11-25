@@ -97,6 +97,31 @@ Start queda deshabilitado. No hay modo simulación.
 - `POST /api/tools/moodle-sqli/run` — `{confirm: true,
   authorization_reference}`. Solo con dry-run previo del comando
   exacto y la misma referencia; si no, 409 sin ejecutar.
+- `GET /api/engine/goals` — los 3 goals del motor con descripción,
+  requisitos y pasos.
+- `POST /api/engine/plan` — `{goal, target, scope,
+  authorization_reference, moodle?}`. Genera el plan sin ejecutar
+  nada; lo deja aprobado en memoria del servidor.
+- `POST /api/engine/run` — `{confirm: true,
+  authorization_reference}`. Solo con plan aprobado y la misma
+  referencia; ejecuta el plan paso a paso (dry-run por paso,
+  precondiciones, `replan`) y guarda la evidencia en
+  `workspace/engine_runs/<timestamp>/plan.json`.
+
+## Motor de planificación por reglas
+
+Menú **Assessments → Motor: generar plan**: a partir del mapeo
+(sesiones, findings, herramientas instaladas) genera un plan de
+pasos ordenados para un goal, sin ejecutar nada. Los goals son
+`owasp_report` (pasiva → OWASP web → vulnerabilidad → correlación
+→ reporte), `full_assessment` (añade activa e intrusiva con nmap;
+sin nmap esos pasos se saltan con aviso) y `moodle_sqli_confirm`
+(detección Moodle y, si es vulnerable, extracción acotada de
+`database()` y `username`, nunca password). El plan se muestra paso
+a paso en **Plan Overview**; tras confirmarlo se ejecuta paso a
+paso, con la salida real por paso en la consola verde. Diseño y
+reglas en [`web-ui/engine/DESIGN.md`](engine/DESIGN.md); el motor
+es `web-ui/engine/engine.py` (solo stdlib, determinista, sin LLM).
 
 ## Herramienta aparte: Moodle SQLi (local)
 
@@ -157,6 +182,9 @@ script aparte con sus propios guardrails.
 - `web-ui/server.py` — backend local (solo stdlib, 127.0.0.1:8765).
 - `web-ui/test_server.py` — tests unitarios de la validación del
   servidor (sin llamar a `pentestx.py`).
+- `web-ui/engine/engine.py` — motor de planificación por reglas
+  (goals `owasp_report`, `full_assessment` y `moodle_sqli_confirm`),
+  con `web-ui/engine/test_engine.py` y `web-ui/engine/DESIGN.md`.
 - `web-ui/tools/moodle_sqli.py` — sonda Moodle SQLi local aparte
   (CVE-2021-36393; solo database y username, sin password), con
   `web-ui/tools/test_moodle_sqli.py` y `web-ui/tools/README.md`.
@@ -170,9 +198,11 @@ script aparte con sus propios guardrails.
 ```bash
 python3 -m py_compile web-ui/server.py
 python3 -m py_compile web-ui/tools/moodle_sqli.py
+python3 -m py_compile web-ui/engine/engine.py
 node --check web-ui/app.js
 python3 -m unittest discover -s web-ui -p "test_server.py" -v
 python3 -m unittest discover -s web-ui/tools -p "test_moodle_sqli.py" -v
+python3 -m unittest discover -s web-ui/engine -p "test_engine.py" -v
 ```
 
 La ejecución real solo se puede probar en la máquina de laboratorio

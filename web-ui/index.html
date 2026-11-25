@@ -51,6 +51,7 @@
     </div>
     <div class="menu" data-menu="assessments"><button type="button" class="menu-btn">Assessments</button>
       <div class="menu-drop" role="menu">
+        <button type="button" data-action="engine-plan">Motor: generar plan</button>
         <button type="button" data-action="show-plan">Show plan overview</button>
         <button type="button" data-action="show-findings">Show findings</button>
       </div>
@@ -250,6 +251,59 @@
     <pre id="moodleConfirmPayloads" class="confirm-command"></pre>
     <p class="muted">La extracción es lenta (unos segundos por carácter acertado). Para detenerla, pulsa Pause.</p>
     <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
+    <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
+  </form>
+</dialog>
+
+<!-- Engine (planning motor) dialog -->
+<dialog id="engineDialog" class="dialog">
+  <form method="dialog" id="engineForm">
+    <h2>Motor de planificación</h2>
+    <p class="muted">Genera un plan de pasos a partir del mapeo (sesiones, findings, herramientas instaladas) sin ejecutar nada. El plan se aprueba con dry-run y luego se ejecuta paso a paso, verificando las precondiciones de cada paso.</p>
+    <label>Goal
+      <select id="engineGoal">
+        <option value="owasp_report" selected>owasp_report — informe OWASP</option>
+        <option value="full_assessment">full_assessment — evaluación completa (nmap)</option>
+        <option value="moodle_sqli_confirm">moodle_sqli_confirm — confirmar SQLi en Moodle local</option>
+      </select>
+    </label>
+    <label>Target (solo contaia.site o 127.0.0.1)
+      <input type="text" id="engineTarget" value="contaia.site">
+    </label>
+    <label>Scope
+      <select id="engineScope">
+        <option value="passive" selected>passive</option>
+        <option value="active">active</option>
+      </select>
+    </label>
+    <label>Referencia de autorización escrita (obligatoria)
+      <input type="text" id="engineAuth" placeholder="docs/AUTORIZACION-contaia.md">
+    </label>
+    <div id="engineMoodleFields" hidden>
+      <label>Base URL (solo http://127.0.0.1:8080/moodle)
+        <input type="text" id="engineMoodleBaseUrl" value="http://127.0.0.1:8080/moodle">
+      </label>
+      <label>Sesskey vigente
+        <input type="text" id="engineMoodleSesskey" autocomplete="off" placeholder="sesskey de la sesión de Moodle">
+      </label>
+      <label>Cookie MoodleSession vigente
+        <input type="password" id="engineMoodleCookie" autocomplete="off" placeholder="valor de la cookie MoodleSession">
+      </label>
+    </div>
+    <p class="muted">Los pasos Moodle sin sesión quedan bloqueados; sin nmap, los pasos activos de full_assessment se saltan con aviso. La sesskey y la cookie no se guardan en el navegador ni en disco.</p>
+    <button type="submit" class="dialog-btn" value="plan">Generar plan</button>
+    <button type="submit" class="dialog-btn" value="cancel" formnovalidate>Cancelar</button>
+  </form>
+</dialog>
+
+<!-- Engine plan confirm dialog -->
+<dialog id="engineConfirmDialog" class="dialog">
+  <form method="dialog">
+    <h2>Confirmar plan del motor</h2>
+    <p>Estos son los pasos del plan aprobado. Solo se ejecutará este plan, sin cambios:</p>
+    <pre id="engineConfirmPlan" class="confirm-command"></pre>
+    <p class="muted">Cada paso hace su propio dry-run antes de ejecutarse. Para detenerlo, pulsa Pause.</p>
+    <button type="submit" class="dialog-btn" value="confirm">Ejecutar plan</button>
     <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
   </form>
 </dialog>
