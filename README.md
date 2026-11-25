@@ -1,6 +1,6 @@
 # PentestX autorizado
 
-**Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas.** El módulo legado está archivado en `archive/kk2_legacy.py` y nunca se ejecuta; PentestX añade una capa CLI con controles de alcance y autorización, y ofrece una GUI de escritorio basada en Tkinter/ttk. La GUI también integra un panel independiente de telemetría para destinos HTTP/UDP, reintentos y métricas.
+**Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas.** El módulo legado está archivado en `archive/kk2_legacy.py` y nunca se ejecuta; PentestX añade una capa CLI con controles de alcance y autorización. La interfaz ya no es una GUI de escritorio basada en Tkinter/ttk: `pentestx_gui.py` fue eliminado del repositorio y la interfaz actual es una web autónoma en `web-ui/` (Design Option 1, estilo Ettercap clásico), que se abre con `web-ui/index.html` en el navegador, sin servidor ni instalación. Las instrucciones completas están en [`web-ui/README.md`](web-ui/README.md).
 
 > **Uso obligatorio:** trabaja únicamente sobre activos propios o cubiertos por autorización escrita y reglas de compromiso vigentes. La confirmación de la interfaz no sustituye la autorización del propietario.
 
@@ -18,25 +18,19 @@
 
 ## Vista general
 
-La aplicación se organiza en dos paneles separados por pestañas. **◈ PentestX** contiene el planificador de operaciones, findings, pipelines y consola. **◉ Telemetría** contiene exclusivamente la configuración del emisor integrado desde `kali-telemetry-gui`.
+La interfaz actual es la web autónoma en `web-ui/` (Design Option 1, estilo Ettercap clásico). Su distribución es: barra de título, menú File | Edit | View | Tools | Assessments | Plugins | Window | Help, barra de herramientas New, Open, Start, Pause, Scan, Import, Export, Save y Config con el distintivo «Authorized • Assessment Only», árbol **OPERATIONS • PHASES** a la izquierda, **Session Map** SA-2024-011 y **Plan Overview** al centro con la tabla de tareas, **Inspector** a la derecha con las pestañas Pipeline, Profiles y Findings, y la consola **TERMINAL CONSOLE** fija abajo con texto verde y las barras de estado.
 
-![Panel principal de PentestX](docs/screenshots/pentestx-panel.png)
-
-*Panel principal con target sintético de laboratorio, fases, mapa de sesión, plan e inspector.*
-
-![Panel integrado de telemetría](docs/screenshots/telemetry-panel.png)
-
-*Panel de telemetría con HTTP, UDP, reintentos, backoff y métricas. Las capturas son demostrativas y no representan una ejecución real.*
+La página es de solo lectura y simula el flujo en local: no genera tráfico de red ni ejecuta escaneos reales. Las instrucciones completas están en [`web-ui/README.md`](web-ui/README.md). Nota: el GIF de ejecución (`web-ui/docs/ejecucion.gif`) todavía no está subido al repositorio, así que no se muestra en GitHub; se describe en el README de `web-ui/`.
 
 ## Inicio rápido
 
 ### Dependencias
 
-En Kali Linux o una distribución Debian/Ubuntu instala Python, Tkinter y las herramientas básicas:
+En Kali Linux o una distribución Debian/Ubuntu instala Python y las herramientas básicas:
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-tk coreutils
+sudo apt install -y python3 coreutils
 ```
 
 PyYAML es opcional y solo se necesita para políticas YAML:
@@ -45,11 +39,13 @@ PyYAML es opcional y solo se necesita para políticas YAML:
 python3 -m pip install -r requirements.txt
 ```
 
-### Abrir la interfaz gráfica
+### Abrir la interfaz web
 
-```bash
-python3 pentestx_gui.py
-```
+No necesita servidor ni instalación. Solo abre el archivo en el navegador:
+
+- Haz doble clic en `web-ui/index.html`, o arrástralo a una ventana del navegador.
+
+La interfaz web muestra el plan y simula el flujo en local; es de solo lectura y no ejecuta operaciones. La ejecución real se hace con la CLI.
 
 ### Abrir la CLI
 
@@ -58,19 +54,17 @@ python3 pentestx.py --help
 python3 pentestx.py --interactive
 ```
 
-La interfaz gráfica muestra el plan y solicita autorización y confirmación antes de ejecutar una operación.
+La CLI muestra el plan y solicita autorización y confirmación antes de ejecutar una operación.
 
 ## Tutorial paso a paso
 
 ### 1. Preparar el alcance
 
-En la pestaña **◈ PentestX**, introduce una IP, dominio, URL o red CIDR que esté dentro del alcance autorizado. La GUI clasifica el valor localmente, sin resolverlo ni contactar la red. Puede sugerir un pipeline o perfil según el tipo de target; la sugerencia no se aplica hasta pulsar **Aplicar sugerencia**.
-
-Marca **Autorización escrita** solo cuando la autorización exista y cubra el target. Para fases activas, selecciona `active` en el alcance operativo. Las acciones activas no pueden ejecutarse con `scope=passive`.
+Antes de ejecutar nada, define el alcance autorizado: una IP, dominio, URL o red CIDR que esté dentro del alcance autorizado. La interfaz web no valida ni ejecuta nada; solo muestra el flujo y el ámbito autorizado del diseño. La validación de alcance la hace la CLI: marca **Autorización escrita** solo cuando la autorización exista y cubra el target. Para fases activas, selecciona `active` en el alcance operativo. Las acciones activas no pueden ejecutarse con `scope=passive`.
 
 ### 2. Seleccionar fases
 
-En **OPERATIONS / PHASES**, activa las fases necesarias. La tabla **PLAN OVERVIEW** permite revisar el modo de cada fase antes de iniciar:
+En el árbol **OPERATIONS • PHASES** de la interfaz web, pulsa las fases necesarias. La tabla **PLAN OVERVIEW** permite revisar el modo de cada fase antes de iniciar:
 
 | Grupo | Fases disponibles |
 |---|---|
@@ -81,11 +75,9 @@ En **OPERATIONS / PHASES**, activa las fases necesarias. La tabla **PLAN OVERVIE
 
 Las acciones `tool` requieren perfiles allowlisted. El escaneo `intrusive` usa perfiles limitados, puertos, tasa, timeout y exclusiones validadas por la CLI.
 
-### 3. Aplicar sugerencias de target o puertos
+### 3. Revisar el Inspector y la consola
 
-El inspector derecho puede sugerir parámetros según el target y los puertos detectados en un `findings_db.json` local. **Analizar puertos** solo lee datos locales; no ejecuta Nmap ni consulta servicios. **Aplicar regla** modifica el pipeline o el campo de puertos, pero no ejecuta nada.
-
-Las reglas distinguen HTTP/HTTPS, SSH, FTP/FTPS, SMTP, POP3/IMAP, SMB/NFS, DNS, MySQL, PostgreSQL, Redis y otros servicios comunes. Para bases de datos, correo, acceso remoto y compartición, las recomendaciones son pasivas y no habilitan credenciales, fuerza bruta, extracción ni comandos.
+En la interfaz web, el **Inspector** de la derecha muestra el estado del pipeline (Pipeline Status), los perfiles activos (Profiles) y los findings (Findings). La **TERMINAL CONSOLE** fija de abajo muestra en verde las líneas de log de la sesión. **Start** avanza la simulación local del escaneo y **Pause** la detiene; al llegar a 25/25 checks el escaneo pasa a Completed. Todo esto es simulación local: no se contacta ningún host ni se ejecuta ninguna herramienta.
 
 ### 4. Validar un plan con la CLI
 
@@ -104,7 +96,7 @@ El resultado esperado incluye `DRY-RUN: no se ejecutarán funciones ni tráfico 
 
 ### 5. Ejecutar un plan autorizado
 
-Para ejecutar desde la GUI, revisa el plan, el target, el scope, los puertos, las exclusiones y la autorización; después pulsa **Ejecutar** y acepta la confirmación. La CLI también exige `--scope active` y `--confirm-written-authorization` para las acciones activas.
+Para ejecutar, revisa el plan, el target, el scope, los puertos, las exclusiones y la autorización en la CLI; después ejecuta con la CLI y acepta la confirmación. La CLI también exige `--scope active` y `--confirm-written-authorization` para las acciones activas. La interfaz web no ejecuta planes: su botón de Start solo avanza la simulación local.
 
 Ejemplo de previsualización de un pipeline controlado:
 
@@ -119,17 +111,15 @@ python3 pentestx.py \
   --dry-run
 ```
 
-### 6. Usar la pestaña Telemetría
+### 6. Telemetría
 
-Cambia a **◉ Telemetría**. Configura una URL HTTP `GET`/`POST` o un destino UDP, define puerto, BSSID contextual, intentos totales y backoff. Pulsa **Guardar configuración** y después **Enviar prueba** para encolar un mensaje sintético. **Cargar TXT** lee un archivo local de hasta 1 MiB y lo trata como datos; no ejecuta sus líneas.
-
-El panel muestra mensajes encolados, envíos, fallos, intentos, reintentos, errores recientes y tamaño de cola. UDP no cifra ni confirma que la aplicación remota haya procesado el datagrama. Usa solo receptores controlados y prefiere HTTPS cuando esté disponible.
+La nueva interfaz web no incluye panel de telemetría. El módulo `telemetry_sender.py` sigue en el repositorio, sin panel. Sigue sin cifrado ni autenticación, solo para destinos de laboratorio y sin secretos en el código. UDP no cifra ni confirma que la aplicación remota haya procesado el datagrama. Usa solo receptores controlados y prefiere HTTPS cuando esté disponible.
 
 ## Seguridad y límites
 
-PentestX no expone desde su capa CLI ni desde la GUI funciones de fuerza bruta, explotación personalizada, post-explotación, persistencia en el target, pivoting o exfiltración. La fase `vulnerability` procesa findings existentes y produce candidatos para revisión manual; no autoriza explotación.
+PentestX no expone desde su capa CLI ni desde la interfaz web funciones de fuerza bruta, explotación personalizada, post-explotación, persistencia en el target, pivoting o exfiltración. La fase `vulnerability` procesa findings existentes y produce candidatos para revisión manual; no autoriza explotación.
 
-El panel de telemetría es independiente del panel de PentestX. Cambiar de pestaña no inicia un plan ni envía datos automáticamente. El cierre de la ventana detiene el worker de telemetría.
+La interfaz web es de solo lectura y simulación local: no genera tráfico de red, no ejecuta escaneos ni herramientas y no inicia ningún plan. La ejecución real sigue siendo `pentestx.py` en el laboratorio.
 
 La persistencia de la aplicación se limita a evidencia local, logs, manifiestos, capturas hashadas y reportes del workspace. No se crea persistencia en los activos evaluados.
 
@@ -157,14 +147,14 @@ La política OWASP web está documentada en [`OWASP_WEB_FINDINGS_PIPELINES.md`](
 
 Cada sesión genera un workspace local. Según las fases seleccionadas puede contener `execution_manifest.json`, `findings_db.json`, `attack_chains.json`, logs por módulo, reportes, `vulnerability_review.json`, `VULNERABILITY_REVIEW.md`, manifiestos de perfiles, artefactos de escaneo intrusivo y capturas con SHA-256.
 
-La estructura visual de la GUI se explica con mayor detalle en [`GUI_TUTORIAL.md`](GUI_TUTORIAL.md). La captura de referencia del diseño anterior está en [`docs/screenshots/pentestx-gui-ettercap-model.png`](docs/screenshots/pentestx-gui-ettercap-model.png).
+La guía de la interfaz actual está en [`web-ui/README.md`](web-ui/README.md). `GUI_TUTORIAL.md` describe la GUI de Tkinter eliminada y ya no está vigente como tutorial; las capturas en `docs/screenshots/` muestran los paneles antiguos de esa GUI.
 
 ## Comprobación y desarrollo
 
 Ejecuta las comprobaciones básicas:
 
 ```bash
-python3 -m py_compile pentestx_gui.py telemetry_sender.py pentestx.py pentestx_controlled.py
+python3 -m py_compile telemetry_sender.py pentestx.py pentestx_controlled.py
 python3 -m unittest discover -s tests -v
 python3 pentestx.py --check-tools
 # Dry-run contra contaia.site (requiere scope.yaml y referencia de autorización;
@@ -185,7 +175,7 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 
 | Archivo o directorio | Propósito |
 |---|---|
-| `pentestx_gui.py` | GUI principal con pestañas PentestX y Telemetría. |
+| `web-ui/` | Interfaz web actual (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js` y `README.md` con las instrucciones de uso. |
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
 | `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |
@@ -194,8 +184,8 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 | `wordlists/ffuf_safe_200.txt` | Wordlist de 200 entradas para el perfil `ffuf_safe`. |
 | `tests/` | Tests automatizados de nivel 1 (unittest, mocks y dry-run). |
 | `.github/workflows/ci.yml` | CI: compila los módulos y corre los tests. |
-| `GUI_TUTORIAL.md` | Tutorial extendido de interfaz, sugerencias y telemetría. |
-| `docs/screenshots/` | Capturas visuales de los paneles. |
+| `GUI_TUTORIAL.md` | Tutorial de la GUI de Tkinter eliminada; ya no está vigente. |
+| `docs/screenshots/` | Capturas de los paneles antiguos de la GUI eliminada. |
 | `workspace/` | Evidencia y sesiones generadas localmente. |
 
 ## Estado y licencia
