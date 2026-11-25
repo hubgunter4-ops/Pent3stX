@@ -1,211 +1,118 @@
-# PentestX autorizado
+# Pent3stX
 
-**Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas.** El módulo legado está archivado en `archive/kk2_legacy.py` y nunca se ejecuta; PentestX añade una capa CLI con controles de alcance y autorización. La interfaz ya no es una GUI de escritorio basada en Tkinter/ttk: `pentestx_gui.py` fue eliminado del repositorio y la interfaz actual es una web funcional en `web-ui/` (Design Option 1, estilo Ettercap clásico), con un backend local (`web-ui/server.py`, solo stdlib) que ejecuta la CLI con sus guardrails. Se arranca con `python3 web-ui/server.py` desde la raíz del repo y se abre en http://127.0.0.1:8765/. Las instrucciones completas están en [`web-ui/README.md`](web-ui/README.md).
+Estación local para planificar, ejecutar y documentar evaluaciones de seguridad autorizadas, con interfaz web y backend local. Solo para activos propios o cubiertos por autorización escrita.
 
-> **Uso obligatorio:** trabaja únicamente sobre activos propios o cubiertos por autorización escrita y reglas de compromiso vigentes. La confirmación de la interfaz no sustituye la autorización del propietario.
+> **Vídeo:** [web-ui/docs/ejecucion.mp4](web-ui/docs/ejecucion.mp4) — demo de la interfaz ejecutando un plan, con backend simulado (mock de `pentestx.py`). La ejecución real solo se puede grabar en la máquina de laboratorio.
 
-## Nivel 1 — reparación de seguridad (2026-11-13)
+## Requisitos
 
-1. **Legado archivado:** `kk2_repaired.py` (Hydra con credenciales en texto plano, John/Hashcat, Metasploit con `exec(code)`, escaneos agresivos, exfiltración y borrado de logs) se movió a `archive/kk2_legacy.py` con aviso. `pentestx.py` no lo importa ni lo carga: `load_legacy()` lanza `RuntimeError` si algo intenta usarlo.
-2. **Pipelines controlados:** `standard`/`with_intrusive`/`with_owasp`/`full_web` solo usan pasos controlados (passive local, active `nmap -sn --max-rate 5`, intrusive `nmap -sT -sV` acotado, OWASP web GET/HEAD con topes, vulnerability/correlate/report locales). No existe ningún paso que invoque el legado; el modo real sin perfil controlado se niega.
-3. **Alcance con `scope.yaml`:** por defecto solo `contaia.site` y `127.0.0.1`. Se rechazan redes privadas, `169.254.169.254`, `0.0.0.0/0`, redes más amplias que /24, multicast y loopback distinto de `127.0.0.1`. Toda acción con target exige una referencia de autorización escrita: la CLI la toma del flag `--authorization-reference` o de `scope.yaml` (`authorization_reference`). La interfaz web no escribe ninguna referencia: solo una casilla de confirmación por ejecución, y el servidor pasa `--scope-file scope.yaml` cuando el archivo existe.
-4. **Dry-run en la GUI:** botón «Ver plan (dry-run)» que muestra el comando exacto y lo ejecuta en modo dry-run; la ejecución real se niega hasta haber revisado el plan para ese comando exacto.
-5. **`ffuf_safe` practicable:** wordlist propia de 200 entradas (`wordlists/ffuf_safe_200.txt`) y `max_requests: 200` explícito; una wordlist mayor que el tope se rechaza.
-6. **Evidencia protegida:** `workspace/` en `.gitignore`; los cuerpos de respuesta se guardan solo como extracto de 1.024 caracteres con SHA-256; credenciales redactadas en texto y en estructuras (`redact_text`/`redact_value`, incluido `Authorization: Bearer <token>`); el escaneo OWASP se detiene ante 429/403.
-7. **Licencia, tests y CI:** licencia MIT (`LICENSE`), tests en `tests/` (`python3 -m unittest discover -s tests -v`, solo mocks y dry-run, sin herramientas externas) y CI en `.github/workflows/ci.yml`.
+- **Python 3** (la interfaz web y el backend usan solo la librería estándar, sin dependencias nuevas).
+- **Opcionales, según lo que uses:**
+  - `nmap`, `ffuf`, `sqlmap`, `traceroute` — solo los necesitan las fases activas/intrusivas y el perfil `tool`. El pipeline por defecto (`with_owasp`) no necesita ninguna herramienta externa, solo Python 3.
+  - `python3-yaml` — solo para políticas YAML (`--policy-file`).
+  - **Metasploit + `msfmcpd`** — solo para el panel de Metasploit.
+- Comprueba qué tienes instalado con `python3 pentestx.py --check-tools`.
 
-**Fuera del nivel 1:** la telemetría (`telemetry_sender.py` y el panel de la GUI) sigue sin cifrado ni autenticación — solo destinos de laboratorio y sin secretos en el código.
-
-**Nota (2026-11-25):** la GUI de la que habla el punto 4 ya no existe; el dry-run y la ejecución con el comando exacto ahora se hacen desde la interfaz web (`web-ui/server.py`), que conserva esa misma regla.
-
-## Vista general
-
-La interfaz actual es la web funcional en `web-ui/` (Design Option 1, estilo Ettercap clásico). Su distribución es: barra de título, menú File | Edit | View | Tools | Assessments | Plugins | Window | Help, barra de herramientas New, Open, Start, Pause, Scan, Import, Export, Save y Config con el distintivo «Authorized • Assessment Only», árbol **OPERATIONS • PHASES** a la izquierda, **Session Map** y **Plan Overview** al centro con la tabla de tareas, **Inspector** a la derecha con las pestañas Pipeline, Profiles y Findings, y la consola **TERMINAL CONSOLE** fija abajo con texto verde y las barras de estado.
-
-La página no simula nada: con el backend local corriendo, Start hace primero un dry-run real con la CLI, muestra el comando exacto y solo ejecuta tras confirmación explícita; la consola muestra la salida real y el Inspector los findings reales de la sesión. Sin backend, Start queda deshabilitado. Las instrucciones completas están en [`web-ui/README.md`](web-ui/README.md). Nota: el GIF de ejecución (`web-ui/docs/ejecucion.gif`) es la animación antigua de la versión demo y ya no se incrusta en la guía; además todavía no está subido al repositorio.
-
-Aparte, en `web-ui/tools/` vive la sonda Moodle SQLi local (CVE-2021-36393) como script separado: solo habla con el Moodle propio en `http://127.0.0.1:8080/moodle`, con dry-run y confirmación propios, y extrae únicamente `database()` y `username` (el hash de password quedó fuera a propósito). No toca `pentestx.py`; ver [`web-ui/tools/README.md`](web-ui/tools/README.md).
-
-En `web-ui/engine/` vive el motor de planificación por reglas: dado un goal (`owasp_report`, `full_assessment`, `moodle_sqli_confirm` o `msf_targeted`) y el mapeo actual, genera un plan de pasos ordenados sin ejecutar nada, y luego lo ejecuta paso a paso con dry-run por paso y precondiciones. Diseño en [`web-ui/engine/DESIGN.md`](web-ui/engine/DESIGN.md).
-
-## Inicio rápido
-
-### Dependencias
-
-En Kali Linux o una distribución Debian/Ubuntu instala Python y las herramientas básicas:
+## Instalación
 
 ```bash
-sudo apt update
-sudo apt install -y python3 coreutils
+git clone https://github.com/hubgunter4-ops/Pent3stX.git
+cd Pent3stX
 ```
 
-PyYAML es opcional y solo se necesita para políticas YAML:
+Para actualizar a la última versión:
 
 ```bash
-python3 -m pip install -r requirements.txt
+git pull origin main
+git log --oneline -1
 ```
 
-### Abrir la interfaz web
+> Nota: existe un `pentestx_1.0_all.deb` (v1), pero está desactualizado: no incluye la herramienta Moodle, el motor, el panel de Metasploit ni la correlación. Usa `git clone` / `git pull`.
 
-Arranca el backend local desde la raíz del repositorio (solo stdlib, sin dependencias nuevas) y abre la URL en el navegador:
+## Arranque
+
+Desde la raíz del repositorio:
 
 ```bash
 python3 web-ui/server.py
-# http://127.0.0.1:8765/ — solo local, Ctrl+C para detenerlo
 ```
 
-El servidor valida cada petición (allowlist de targets, autorización obligatoria, acciones y pipelines permitidos) y ejecuta la CLI. La interfaz muestra el plan, la salida real y los findings reales. Sin el servidor corriendo, la página no simula nada y Start queda deshabilitado.
+Abre http://127.0.0.1:8765/ en el navegador. El servidor solo escucha en `127.0.0.1` (solo esta máquina). Para detenerlo, Ctrl+C en la terminal.
 
-### Abrir la CLI
+**No abras `web-ui/index.html` con doble clic:** la página carga, pero con `file://` el navegador bloquea las llamadas al backend, la consola avisa "Backend no conectado" y Start queda deshabilitado.
+
+## scope.yaml y autorización
+
+La CLI exige una referencia de autorización escrita, también para el dry-run. La referencia vive en `scope.yaml`, no en la interfaz:
 
 ```bash
-python3 pentestx.py --help
-python3 pentestx.py --interactive
+cp scope.example.yaml scope.yaml
 ```
 
-La CLI muestra el plan y solicita autorización y confirmación antes de ejecutar una operación.
+Completa `authorization_reference` en `scope.yaml` con tu referencia. Sin una referencia usable ahí, el plan y el dry-run funcionan como medición del scope, pero la ejecución se rechaza con 409.
 
-## Tutorial paso a paso
+La autorización en la interfaz es solo una casilla por ejecución: **"Confirmo que tengo autorización escrita para este alcance"**, en el diálogo de confirmación. Sin marcarla, no se ejecuta nada. Marca la casilla solo cuando la autorización exista y cubra el target.
 
-### 1. Preparar el alcance
+Targets permitidos: solo tu objetivo autorizado y `127.0.0.1` (localhost). Cualquier otro target se rechaza.
 
-Antes de ejecutar nada, define el alcance autorizado: una IP, dominio, URL o red CIDR que esté dentro del alcance autorizado. En Config de la interfaz web pon el target, el scope y el pipeline; el backend valida el alcance (solo `contaia.site` y `127.0.0.1`) y rechaza cualquier otro target. La autorización ya no se escribe como texto en la interfaz: es una casilla por ejecución ("Confirmo que tengo autorización escrita para este alcance") en el diálogo de confirmación. Sin marcarla, el plan y el dry-run funcionan como medición del scope ("sin autorización confirmada"), pero la ejecución se rechaza. Y la referencia que exige la CLI vive en `scope.yaml` (copia `scope.example.yaml` y completa `authorization_reference`): sin una referencia usable ahí, la ejecución también se rechaza, aunque la casilla esté marcada. Marca la casilla solo cuando la autorización exista y cubra el target. Para fases activas, selecciona `active` en el alcance operativo. Las acciones activas no pueden ejecutarse con `scope=passive`.
+## Uso
 
-### 2. Seleccionar fases
+### 1. Configura el objetivo
 
-En el árbol **OPERATIONS • PHASES** de la interfaz web, pulsa las fases necesarias. La tabla **PLAN OVERVIEW** permite revisar el modo de cada fase antes de iniciar:
+En **Config**: target (tu objetivo autorizado, por ejemplo `127.0.0.1`), scope (`passive` o `active`) y pipeline (`with_owasp` por defecto). Ese target es el objetivo fijado que comparten Start, el motor, Moodle y Metasploit.
 
-| Grupo | Fases disponibles |
-|---|---|
-| Reconocimiento | `passive`, `active` |
-| Enumeración y revisión | `web`, `ports`, `vuln`, `owasp_web`, `vulnerability` |
-| Correlación y salida | `correlate`, `report`, `correlated` |
-| Perfiles controlados | `tool`, `intrusive` |
+### 2. Ejecuta un plan (Start)
 
-Las acciones `tool` requieren perfiles allowlisted. El escaneo `intrusive` usa perfiles limitados, puertos, tasa, timeout y exclusiones validadas por la CLI.
+1. Elige la fase en el árbol **OPERATIONS • PHASES** (`owasp_web` está seleccionada por defecto).
+2. Pulsa **Start**. El backend hace primero un dry-run real con la CLI y muestra el comando exacto y el manifiesto en la consola verde. No se ejecuta nada todavía.
+3. En el diálogo de confirmación revisa el comando exacto, marca la casilla **"Confirmo que tengo autorización escrita para este alcance"** y confirma. Solo entonces se ejecuta ese comando, sin cambios.
+4. Sigue la salida real en la consola verde. **Pause** (o **Stop**) detiene el proceso en curso.
+5. Revisa los **Findings** en el Inspector: son los de `findings_db.json` de la sesión real. Las sesiones quedan en `workspace/pentestx_sessions/<timestamp>/` (`execution_manifest.json`, `findings_db.json`).
+6. **Export** descarga el reporte con la sesión, el comando del plan y los findings reales.
 
-### 3. Revisar el Inspector y la consola
+### 3. Motor de planificación
 
-En la interfaz web, el **Inspector** de la derecha muestra el estado del pipeline (Pipeline Status), los perfiles activos (Profiles) y los findings reales de la sesión (Findings). La **TERMINAL CONSOLE** fija de abajo muestra en verde la salida real de la CLI. **Start** hace primero un dry-run real y muestra el comando exacto; tras tu confirmación ejecuta ese comando, y **Pause** detiene el proceso en curso. Session Map y la tabla de tareas parten en "Sin sesión" hasta que haya una sesión real.
+Menú **Assessments → Motor: generar plan**. Genera un plan de pasos ordenados sin ejecutar nada; tras confirmarlo se ejecuta paso a paso, con dry-run por paso y precondiciones. Goals:
 
-### 4. Validar un plan con la CLI
+- `owasp_report` — pasiva → OWASP web → vulnerabilidad → correlación → reporte.
+- `full_assessment` — añade activa e intrusiva con nmap (sin nmap, esos pasos se saltan con aviso).
+- `moodle_sqli_confirm` — detección Moodle y, si es vulnerable, extracción acotada de `database()` y `username`, nunca password.
+- `msf_targeted` — mapeo → vulnerabilidad → correlación → correlación findings → módulos Metasploit → check y ejecución del módulo correlacionado, solo con casilla.
 
-Para generar un manifiesto sin tráfico, usa la CLI:
+### 4. Moodle SQLi (local)
+
+Menú **Tools → Moodle SQLi (local)**. Sonda de inyección SQL ciega por tiempo (CVE-2021-36393) contra tu Moodle propio en `http://127.0.0.1:8080/moodle`. Pega la sesskey y la cookie `MoodleSession` vigentes en el diálogo (caducan y no se guardan). Flujo igual que el resto: dry-run con los payloads exactos → confirmación con casilla → ejecución. Extrae solo `database()` y `username`; el hash de password quedó fuera a propósito. Detalles en [`web-ui/tools/README.md`](web-ui/tools/README.md).
+
+### 5. Panel de Metasploit (local)
+
+Menú **Tools → Metasploit (local)**. Necesita `msfmcpd` corriendo en tu PC:
 
 ```bash
-python3 pentestx.py \
-  --target example.com \
-  --scope passive \
-  --action passive correlate report \
-  --confirm-written-authorization \
-  --dry-run
+msfrpcd -U msfuser -P <tu-password> -p 55553
+./msfmcpd --mcp-transport http --enable-dangerous-actions
 ```
 
-El resultado esperado incluye `DRY-RUN: no se ejecutarán funciones ni tráfico de red.` y un `execution_manifest.json` bajo `workspace/pentestx_sessions/<timestamp>/`.
+El panel se conecta a `http://127.0.0.1:3000/` (o lo que pongas en `MSF_MCP_URL`). Lectura sin casilla: buscar módulos, hosts, servicios, vulnerabilidades y sesiones. Check, ejecución y detener sesiones solo con la casilla marcada. Sin `--enable-dangerous-actions`, el panel solo lee.
 
-### 5. Ejecutar un plan autorizado
+**Correlación findings → módulos:** en el mismo diálogo, elige una sesión con findings (o pega findings en JSON) y pulsa **Correlacionar**. Devuelve por finding los módulos candidatos con rango y motivo (por CVE, por servicio y por puerto), con botón **Usar** que carga el módulo con el target ya fijado. También la usa el goal `msf_targeted` del motor.
 
-Para ejecutar, revisa el plan, el target, el scope, los puertos, las exclusiones y la autorización; después pulsa **Start** en la interfaz web: primero verás el dry-run con el comando exacto y solo tras confirmarlo se ejecuta ese comando. La CLI también exige `--scope active` y `--confirm-written-authorization` para las acciones activas.
+**Payloads reverse:** al ejecutar un payload reverse, el panel arranca antes su handler `exploit/multi/handler` (LHOST `127.0.0.1`) por la misma conexión MCP y la sesión entrante se vincula a esa ejecución y aparece en la tabla de sesiones. Detalles en [`web-ui/msf/README.md`](web-ui/msf/README.md).
 
-Ejemplo de previsualización de un pipeline controlado:
+## Solución de problemas
 
-```bash
-python3 pentestx.py \
-  --target 192.0.2.10 \
-  --scope active \
-  --action correlated \
-  --pipeline-profile with_intrusive \
-  --intrusive-profile auto \
-  --confirm-written-authorization \
-  --dry-run
-```
+**"No realiza ningún scan"** — comprueba en este orden:
 
-### 6. Telemetría
+1. **¿Abriste http://127.0.0.1:8765/?** Con doble clic en `web-ui/index.html` (`file://`) el backend no está conectado y Start queda deshabilitado.
+2. **¿Está corriendo el servidor?** En la terminal debe verse `Pent3stX Workbench backend en http://127.0.0.1:8765/` y en la interfaz la barra verde debe decir "Backend conectado — pentestx.py disponible". Si no, arranca `python3 web-ui/server.py` desde la raíz del repo.
+3. **¿Existe `scope.yaml` con referencia?** Sin referencia usable en `scope.yaml`, el plan es solo una medición del scope y la ejecución se rechaza. Copia `scope.example.yaml` y completa `authorization_reference`.
+4. **¿Marcaste la casilla?** Sin marcar "Confirmo que tengo autorización escrita para este alcance" en el diálogo de confirmación, la ejecución se rechaza con 409.
+5. **¿Qué dice la consola verde tras Start?** Ahí está el motivo exacto (dry-run rechazado, target fuera de la allowlist, falta de referencia, etc.).
+6. **Diagnóstico rápido:**
+   ```bash
+   curl http://127.0.0.1:8765/api/status
+   git log --oneline -1
+   ls web-ui/server.py
+   python3 pentestx.py --check-tools
+   ```
 
-La nueva interfaz web no incluye panel de telemetría. El módulo `telemetry_sender.py` sigue en el repositorio, sin panel. Sigue sin cifrado ni autenticación, solo para destinos de laboratorio y sin secretos en el código. UDP no cifra ni confirma que la aplicación remota haya procesado el datagrama. Usa solo receptores controlados y prefiere HTTPS cuando esté disponible.
-
-## Seguridad y límites
-
-PentestX no expone desde su capa CLI ni desde la interfaz web funciones de fuerza bruta, explotación personalizada, post-explotación, persistencia en el target, pivoting o exfiltración. La fase `vulnerability` procesa findings existentes y produce candidatos para revisión manual; no autoriza explotación. Aparte de la CLI, `web-ui/tools/moodle_sqli.py` es una herramienta separada para el Moodle local del laboratorio (CVE-2021-36393), con sus propios guardrails (solo 127.0.0.1:8080/moodle, dry-run, autorización escrita y sin extracción del hash de password); no forma parte de los pipelines de `pentestx.py`.
-
-La interfaz web ya no es de solo lectura ni simulación: ejecuta la CLI real a través del backend local, pero solo con dry-run previo del comando exacto, autorización escrita y los guardrails de la CLI (allowlist, pipelines controlados, sin shell). La ejecución real sigue viviendo en `pentestx.py` y solo corre en la máquina local donde se arranca el servidor. El motor de planificación (`web-ui/engine/`) genera planes solo con acciones y pipelines de las allowlists; no añade herramientas ni amplía el alcance. La autorización no se escribe como texto en la interfaz ni se guarda en Config ni en el navegador: es una casilla por ejecución (en el diálogo de confirmación de Start, en el del motor y en el de Moodle SQLi). Sin marcarla, el plan y el dry-run funcionan como medición del scope y dicen explícitamente "sin autorización confirmada"; la ejecución real se rechaza. La referencia que exige la CLI vive en `scope.yaml`: sin una referencia usable ahí, la ejecución también se rechaza, porque la CLI la exige incluso para el dry-run.
-
-La persistencia de la aplicación se limita a evidencia local, logs, manifiestos, capturas hashadas y reportes del workspace. No se crea persistencia en los activos evaluados.
-
-## CLI, perfiles y políticas
-
-Lista los perfiles fijos y personalizados:
-
-```bash
-python3 pentestx.py --list-profiles
-python3 pentestx.py --policy-file profiles.example.yaml --list-profiles
-```
-
-Los perfiles fijos `ffuf_safe` y `sqlmap_safe` usan allowlists, límites de tasa, concurrencia, timeout, reintentos y categorías de findings compatibles. La instalación de herramientas está separada de la ejecución y permite únicamente paquetes allowlisted:
-
-```bash
-python3 pentestx.py \
-  --profile ffuf_safe \
-  --install-tools \
-  --confirm-tool-install
-```
-
-La política OWASP web está documentada en [`OWASP_WEB_FINDINGS_PIPELINES.md`](OWASP_WEB_FINDINGS_PIPELINES.md). Los ejemplos se encuentran en [`profiles.example.yaml`](profiles.example.yaml) y [`owasp_profiles.example.yaml`](owasp_profiles.example.yaml).
-
-## Salidas y evidencia
-
-Cada sesión genera un workspace local. Según las fases seleccionadas puede contener `execution_manifest.json`, `findings_db.json`, `attack_chains.json`, logs por módulo, reportes, `vulnerability_review.json`, `VULNERABILITY_REVIEW.md`, manifiestos de perfiles, artefactos de escaneo intrusivo y capturas con SHA-256.
-
-La guía de la interfaz actual está en [`web-ui/README.md`](web-ui/README.md). `GUI_TUTORIAL.md` describe la GUI de Tkinter eliminada y ya no está vigente como tutorial; las capturas en `docs/screenshots/` muestran los paneles antiguos de esa GUI.
-
-## Comprobación y desarrollo
-
-Ejecuta las comprobaciones básicas:
-
-```bash
-python3 -m py_compile telemetry_sender.py pentestx.py pentestx_controlled.py
-python3 -m py_compile web-ui/server.py
-python3 -m py_compile web-ui/tools/moodle_sqli.py
-python3 -m py_compile web-ui/engine/engine.py
-node --check web-ui/app.js
-python3 -m unittest discover -s web-ui -p "test_server.py" -v
-python3 -m unittest discover -s web-ui/tools -p "test_moodle_sqli.py" -v
-python3 -m unittest discover -s web-ui/engine -p "test_engine.py" -v
-python3 -m unittest discover -s tests -v
-python3 pentestx.py --check-tools
-# Dry-run contra contaia.site (requiere scope.yaml y referencia de autorización;
-# copia scope.example.yaml a scope.yaml y completa la referencia):
-python3 pentestx.py --target https://contaia.site \
-  --scope active \
-  --action correlated \
-  --pipeline-profile standard \
-  --confirm-written-authorization \
-  --authorization-reference docs/AUTORIZACION-contaia.md \
-  --scope-file scope.yaml \
-  --dry-run
-```
-
-La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VALIDATION.md).
-
-## Estructura del proyecto
-
-| Archivo o directorio | Propósito |
-|---|---|
-| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). En `web-ui/engine/` vive el motor de planificación por reglas (`engine.py`, `test_engine.py`, `DESIGN.md`). En `web-ui/msf/` vive el panel de Metasploit (`msf_client.py`, `test_msf.py`, `README.md`): habla con el `msfmcpd` oficial en local, con la casilla de autorización como único control; un payload reverse arranca antes su handler `exploit/multi/handler` por la misma conexión MCP. El target de Config es el objetivo fijado que comparten Start, el motor, Moodle y Metasploit; `POST /api/msf/correlate` empareja findings con módulos Metasploit (por CVE, servicio y puerto) y el goal `msf_targeted` del motor ejecuta el módulo correlacionado. |
-| `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
-| `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
-| `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |
-| `archive/kk2_legacy.py` | Módulo legado archivado; nunca se ejecuta. |
-| `scope.example.yaml` | Alcance de ejemplo (copiar a `scope.yaml`). |
-| `wordlists/ffuf_safe_200.txt` | Wordlist de 200 entradas para el perfil `ffuf_safe`. |
-| `tests/` | Tests automatizados de nivel 1 (unittest, mocks y dry-run). |
-| `.github/workflows/ci.yml` | CI: compila los módulos y corre los tests. |
-| `GUI_TUTORIAL.md` | Tutorial de la GUI de Tkinter eliminada; ya no está vigente. |
-| `docs/screenshots/` | Capturas de los paneles antiguos de la GUI eliminada. |
-| `workspace/` | Evidencia y sesiones generadas localmente. |
-
-## Estado y licencia
-
-El proyecto es experimental y está orientado a laboratorios y activos autorizados. Revisa [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md) y las reglas de compromiso antes de usarlo. Licencia MIT, ver [`LICENSE`](LICENSE).
-
-Repositorio: [hubgunter4-ops/n](https://github.com/hubgunter4-ops/n)
+La guía completa de la interfaz está en [`web-ui/README.md`](web-ui/README.md). Licencia MIT.
