@@ -145,6 +145,7 @@
       <div class="plan-view" id="planView" hidden>
         <div class="map-header">Sin sesión | Plan Overview</div>
         <p class="plan-note" id="planNote">Sin plan — el plan real aparece aquí tras el dry-run.</p>
+        <div id="correlateResults"></div>
       </div>
 
       <table class="tasks" aria-label="Tasks">
@@ -265,6 +266,7 @@
         <option value="owasp_report" selected>owasp_report — informe OWASP</option>
         <option value="full_assessment">full_assessment — evaluación completa (nmap)</option>
         <option value="moodle_sqli_confirm">moodle_sqli_confirm — confirmar SQLi en Moodle local</option>
+        <option value="msf_targeted">msf_targeted — objetivo fijado con Metasploit</option>
       </select>
     </label>
     <label>Target (solo contaia.site o 127.0.0.1)
@@ -343,7 +345,7 @@
     </label>
     <label><input type="checkbox" id="optMotion"> Reduce motion (disable scanline / pulse animations)</label>
     <label><input type="checkbox" id="optConsole" checked> Keep terminal console fixed at the bottom</label>
-    <p class="muted">El servidor valida target, scope y pipeline. La autorización ya no es texto: se confirma por casilla en el diálogo de confirmación de cada ejecución, y la referencia que exige la CLI vive en scope.yaml (copia scope.example.yaml). Sin backend, Start no hace nada.</p>
+    <p class="muted">El servidor valida target, scope y pipeline. La autorización ya no es texto: se confirma por casilla en el diálogo de confirmación de cada ejecución, y la referencia que exige la CLI vive en scope.yaml (copia scope.example.yaml). Sin backend, Start no hace nada. <strong>Objetivo fijado:</strong> este target es el que usan Start, el motor, Moodle (127.0.0.1:8080/moodle, fijo) y Metasploit (RHOSTS).</p>
     <button type="submit" class="dialog-btn">Guardar y cerrar</button>
   </form>
 </dialog>
@@ -364,6 +366,9 @@
     <h2>Metasploit (local) — msfmcpd</h2>
     <p class="muted">Panel del MCP oficial de Metasploit (msfmcpd). Lectura sin casilla; verificar y ejecutar solo con autorización escrita. Targets solo contaia.site y 127.0.0.1; LHOST solo 127.0.0.1. Un payload reverse arranca antes su handler exploit/multi/handler por la misma conexión MCP.</p>
     <p id="msfStatusLine" class="muted">Metasploit no conectado.</p>
+    <label>Target fijado (RHOSTS) — el objetivo de Config, el mismo que usan Start, el motor y Moodle
+      <input type="text" id="msfTarget" value="contaia.site">
+    </label>
     <label>Token Bearer de msfmcpd (opcional; también vale MSF_MCP_AUTH_TOKEN)
       <input type="password" id="msfToken" autocomplete="off" placeholder="token de msfmcpd, solo en memoria">
     </label>
@@ -382,6 +387,16 @@
     <button type="button" class="dialog-btn" id="msfSearchBtn">Buscar</button>
     <button type="button" class="dialog-btn" id="msfRefreshSessionsBtn">Actualizar sesiones</button>
     <ul id="msfResults" class="msf-results"><li>Sin búsqueda todavía.</li></ul>
+    <h3>Correlación findings → módulos</h3>
+    <p class="muted">Toma los findings de una sesión (o los que pegues) y busca módulos Metasploit para cada uno: por CVE, por servicio y por puerto. Solo lectura, sin casilla.</p>
+    <label>Sesión para correlacionar
+      <select id="msfFindingsSession"><option value="">— elige una sesión —</option></select>
+    </label>
+    <label>o pega findings en JSON
+      <textarea id="msfFindingsText" rows="3" placeholder='[{"id": "CVE-2017-0144", "service": "smb", "port": 445}]'></textarea>
+    </label>
+    <button type="button" class="dialog-btn" id="msfCorrelateBtn">Correlacionar</button>
+    <div id="msfCorrelate"></div>
     <div id="msfDetail" hidden>
       <h3 id="msfDetailTitle"></h3>
       <p id="msfDetailDesc" class="muted"></p>

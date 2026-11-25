@@ -30,13 +30,14 @@ mapeo (sesiones/findings/herramientas) + goal + autorización
 
 | Entrada | Origen | Obligatoria |
 |---|---|---|
-| `goal` | Usuario, en el diálogo del motor | Sí: `owasp_report`, `full_assessment` o `moodle_sqli_confirm` |
+| `goal` | Usuario, en el diálogo del motor | Sí: `owasp_report`, `full_assessment`, `moodle_sqli_confirm` o `msf_targeted` |
 | `target` | Usuario / Config | Sí: solo allowlist (`contaia.site`, `127.0.0.1`) |
 | `scope` | Usuario / Config | Sí: `passive` o `active` |
 | `pipeline_profile` | Derivado del goal (ver §4) | No: el goal fija el pipeline |
 | `confirm_written_authorization` | Usuario, casilla en el diálogo del motor | No: sin marcarla, el plan es una medición del scope ("sin autorización confirmada") |
-| `mapping` | El servidor, en el momento de planificar | No (se calcula): `tools_available` (`nmap`, `ffuf`, `sqlmap` por `shutil.which`), sesiones existentes en `workspace/pentestx_sessions/`, nº de findings |
+| `mapping` | El servidor, en el momento de planificar | No (se calcula): `tools_available` (`nmap`, `ffuf`, `sqlmap` por `shutil.which`), sesiones existentes en `workspace/pentestx_sessions/`, nº de findings y los findings mismos (máx. 50) |
 | Moodle (`base_url`, `sesskey`, `session_cookie`) | Usuario, solo para `moodle_sqli_confirm` | Solo para ese goal; vive solo en memoria del servidor |
+| `findings` (petición) | Usuario, solo para `msf_targeted` | No: si se aportan, sustituyen a los findings del mapeo al correlacionar |
 
 ## 3. Salida: formato del plan JSON
 
@@ -155,6 +156,54 @@ Reglas propias de Moodle:
 - **Nunca** se extrae `password`: la herramienta lo rechaza y el
   motor no lo pide.
 
+### 4.4 `msf_targeted` — pipeline `with_owasp`, scope `active`, target fijado
+
+El MCP de Metasploit deja de ser un panel aislado: el objetivo es
+el mismo target de Config que usan Start, el motor y Moodle
+(para Moodle, su fijo `127.0.0.1:8080/moodle`), y los findings
+del mapeo se correlacionan con módulos Metasploit para fijar el
+objetivo del módulo que se ejecuta.
+
+| # | Paso | Tool | Precondición | on_fail |
+|---|---|---|---|---|
+| 1 | `mapping` | engine | — | stop |
+| 2 | `vulnerability` | pentestx | paso anterior OK | skip |
+| 3 | `correlate` | pentestx | paso anterior OK o saltado | skip |
+| 4 | `msf_correlate` | msf | paso anterior OK o saltado | skip |
+| 5 | `msf_check` | msf | `msf_candidates` | skip |
+| 6 | `msf_run` | msf | `msf_checked` | stop |
+| 7 | `report` | pentestx | paso anterior OK o saltado | stop |
+
+Reglas propias de MSF:
+
+- `mapping` no escanea nada: lee las sesiones y findings
+  existentes del objetivo fijado (máx. 50 findings) y los deja
+  en el resultado del paso y en el plan (`msf_findings`).
+- `msf_correlate` es solo lectura del MCP (`/api/msf/correlate`):
+  por CVE exacto, por servicio y por puerto conocido. Sin
+  módulos candidatos queda `skipped` con motivo y el plan sigue;
+  sin conexión con `msfmcpd` también queda `skipped` (nunca se
+  inventa un módulo).
+- `msf_check` y `msf_run` usan el primer candidato (mayor rango)
+  del primer finding con candidatos. Las opciones salen de los
+  defaults del propio módulo (`module_info`): `RHOSTS` es
+  siempre el target fijado del plan, `LHOST` siempre
+  `127.0.0.1`; los defaults con pinta de secreto se descartan.
+- Sin la casilla marcada, `msf_check` y `msf_run` se generan
+  `blocked` (la correlación no se bloquea: es lectura). Si la
+  casilla se marca después, en el diálogo de confirmación, el
+  runner los vuelve a `pending` al ejecutar.
+- `msf_run` exige además las acciones peligrosas activadas en
+  `msfmcpd`; sin ellas el paso falla con el motivo. Un payload
+  reverse arranca antes su handler `exploit/multi/handler` por
+  la misma conexión MCP, como en el panel (ver
+  `web-ui/msf/README.md`).
+- Los resultados de los pasos MSF (módulo, opciones redactadas,
+  sesiones vinculadas, evidencia en `workspace/msf_runs/`)
+  quedan en la evidencia del plan
+  (`workspace/engine_runs/<timestamp>/plan.json`) y la tabla
+  finding → módulos se muestra en Plan Overview.
+
 ## 5. Precondiciones
 
 Tipos (todos evaluables sin red, a partir de los resultados de los
@@ -178,6 +227,14 @@ pasos anteriores y del mapeo):
 - `{"type": "moodle_vulnerable"}` — la detección devolvió
   `vulnerable == true`.
 - `{"type": "scope", "scope": "active"}` — el scope del plan es ese.
+- `{"type": "msf_candidates"}` — `msf_correlate` devolvió al menos
+  un módulo candidato. Sin resultado de `msf_correlate` todavía,
+  aún no es decidible y se da por cumplida al planificar (igual
+  que `previous_step_ok`); el runner la vuelve a comprobar antes
+  de ejecutar `msf_check`.
+- `{"type": "msf_checked"}` — el paso `msf_check` terminó
+  `completed`. Igual que la anterior, sin resultado todavía no es
+  decidible.
 
 ## 6. Re-planificación — `replan(plan, results)`
 
@@ -221,18 +278,26 @@ guardado.
 - El motor no decide targets nuevos ni amplía el alcance: si el
   mapeo sugiere algo fuera de la allowlist, se ignora y se anota
   como warning.
+- Los pasos MSF usan el mismo target fijado del plan (Config) y
+  las mismas reglas del panel: `RHOSTS` solo allowlist, `LHOST`
+  solo `127.0.0.1`, check/run solo con casilla y con las acciones
+  peligrosas activadas en `msfmcpd`. La correlación es solo
+  lectura y nunca inventa módulos: sin conexión con `msfmcpd`
+  o sin coincidencias, no hay candidatos y el plan sigue.
 
 ## 8. API del backend (en `web-ui/server.py`)
 
-- `GET /api/engine/goals` — los 3 goals con descripción, requisitos
+- `GET /api/engine/goals` — los 4 goals con descripción, requisitos
   (herramientas, scope, sesión Moodle) y el esquema de pasos.
 - `POST /api/engine/plan` — `{goal, target, scope,
   confirm_written_authorization?, moodle?: {base_url, sesskey,
-  session_cookie, extract?}}`. Valida y devuelve el plan generado
+  session_cookie, extract?}, findings?}`. Valida y devuelve el plan generado
   **sin ejecutar nada**. La respuesta nunca trae la sesskey ni la
   cookie. El plan aprobado queda guardado en memoria del servidor.
   Sin la casilla marcada, el plan dice "sin autorización confirmada"
-  y sirve como medición del scope.
+  y sirve como medición del scope. Para `msf_targeted`, `findings`
+  sustituye a los findings del mapeo y el plan lleva
+  `msf_findings`.
 - `POST /api/engine/run` — `{confirm: true,
   confirm_written_authorization}`. Solo con un plan aprobado y la
   casilla marcada; si no, 409 sin ejecutar. Los pasos pentestx
@@ -241,6 +306,11 @@ guardado.
   entre pasos. Guarda el plan y los resultados por paso en
   `workspace/engine_runs/<timestamp>/plan.json` (con los secretos
   redactados) y devuelve `{run_id, goal, steps: [...], status}`.
+  Los pasos MSF de ejecución que se generaron `blocked` por falta
+  de casilla vuelven a `pending` al confirmar con la casilla.
+- `POST /api/msf/correlate` — `{target, findings}` (en
+  `web-ui/server.py`, documentado en `web-ui/msf/README.md`):
+  correlación findings → módulos, solo lectura del MCP.
 
 ## 9. Interfaz web (sin romper el diseño 1)
 
@@ -249,10 +319,16 @@ guardado.
 - Diálogo del motor: goal (select), target, scope y la casilla de
   autorización ("Confirmo que tengo autorización escrita para este
   alcance"); los campos de Moodle (base-url, sesskey, cookie) solo
-  se muestran si el goal es `moodle_sqli_confirm`.
+  se muestran si el goal es `moodle_sqli_confirm`. El scope se
+  ajusta solo al goal elegido (`msf_targeted` y
+  `full_assessment` exigen `active`).
 - El plan generado se muestra paso a paso en **Plan Overview** (lista
   de pasos con su estado) y en la consola verde; un diálogo de
   confirmación muestra el resumen del plan antes de ejecutar.
+  Para `msf_targeted`, Plan Overview muestra además la tabla
+  finding → módulos candidatos (del paso `msf_correlate`), con
+  botón "Usar" que carga el módulo en el diálogo MSF con el
+  target ya fijado.
 - Durante la ejecución, la consola muestra el avance por paso y los
   pasos saltados/bloqueados con su motivo. **Pause** detiene el
   proceso en curso (`/api/stop`).
@@ -264,7 +340,8 @@ guardado.
 | `web-ui/engine/engine.py` | Motor: reglas, `generate_plan`, `replan`, validación (solo stdlib) |
 | `web-ui/engine/test_engine.py` | Tests unitarios del planificador (sin red ni `pentestx.py`) |
 | `web-ui/engine/DESIGN.md` | Este diseño |
-| `web-ui/server.py` | Endpoints `/api/engine/*` y ejecución paso a paso |
+| `web-ui/msf/msf_client.py` | Cliente MCP + correlación findings → módulos (`correlate_modules`, `validate_findings`, `default_options_from_info`) |
+| `web-ui/server.py` | Endpoints `/api/engine/*`, `/api/msf/correlate` y ejecución paso a paso |
 | `web-ui/app.js`, `web-ui/index.html` | Diálogo del motor, Plan Overview y consola por paso |
 
 ## 11. Tests
@@ -276,6 +353,10 @@ guardado.
 - Gating: `full_assessment` sin `nmap` marca `active`/`intrusive`
   como `skipped_missing_dependency` y continúa.
 - `moodle_sqli_confirm` sin sesskey/cookie: pasos Moodle `blocked`.
+- `msf_targeted`: 7 pasos en orden, scope `active`, `msf_findings`
+  en el plan; sin casilla, `msf_check`/`msf_run` `blocked` y
+  `msf_correlate` pendiente; `replan` sin candidatos salta
+  `msf_check`/`msf_run` y con candidatos los mantiene.
 - Goal desconocido y target fuera de la allowlist: rechazados.
 - Límite de 12 pasos: un plan con más pasos se rechaza.
 - `replan` ante un paso fallido con `on_fail: stop` y con
@@ -288,10 +369,12 @@ guardado.
 - **v1 (esta):** las 3 goals de §4, ejecución paso a paso con
   dry-run por paso, `replan`, evidencia en `workspace/engine_runs/`,
   UI mínima (diálogo + Plan Overview + consola).
-- **v2 (pendiente, no en esta tarea):** el planificador podrá usar
-  los findings de sesiones anteriores como mapeo de entrada (por
-  ejemplo, si una sesión anterior ya detectó Moodle, proponer
-  `moodle_sqli_confirm`); reglas nuevas solo añadiendo entradas a
-  `GOALS` y tests, sin tocar el runner. Queda fuera de v1: ejecución
-  en paralelo, reintentos automáticos y cualquier acción fuera de
-  las allowlists actuales.
+- **v1.1 (esta):** el goal `msf_targeted` (§4.4) y la correlación
+  findings → módulos (`/api/msf/correlate`): el planificador ya
+  usa los findings de sesiones anteriores como mapeo de entrada,
+  y el panel MSF comparte el objetivo fijado de Config. Reglas
+  nuevas solo añadiendo entradas a `GOALS` y tests, sin tocar el
+  runner salvo las ramas de pasos `engine`/`msf`.
+- **v2 (pendiente, no en esta tarea):** ejecución en paralelo,
+  reintentos automáticos y cualquier acción fuera de las
+  allowlists actuales.

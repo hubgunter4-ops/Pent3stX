@@ -51,8 +51,13 @@ authorization checkbox, targets only contaia.site / 127.0.0.1,
 LHOST only 127.0.0.1. A reverse payload is never left without a
 handler: the backend starts ``exploit/multi/handler`` as a
 background job through the same MCP connection before the
-exploit runs, and links the incoming session to that run. See
-``web-ui/msf/README.md`` and ``web-ui/msf/msf_client.py``.
+exploit runs, and links the incoming session to that run. The
+panel shares the fixed target of Config (RHOSTS) with Start,
+the engine and Moodle, and ``/api/msf/correlate`` matches
+findings to Metasploit modules (read-only); the engine goal
+``msf_targeted`` runs that correlation and then the best
+candidate module. See ``web-ui/msf/README.md`` and
+``web-ui/msf/msf_client.py``.
 
 Run from the repository root::
 
@@ -735,14 +740,26 @@ def _load_engine():
 
 
 def _current_mapping():
-    """Mapping the planner needs: installed tools + existing sessions."""
+    """Mapping the planner needs: installed tools + existing sessions.
+
+    Includes the findings of the existing sessions (capped): the
+    msf_targeted goal correlates them with Metasploit modules.
+    """
+    sessions = list_sessions()
+    findings = []
+    for session in sessions[:5]:
+        try:
+            findings.extend(read_findings(session["name"]))
+        except (FileNotFoundError, ValueError, OSError):
+            continue
     return {
         "tools_available": {
             "nmap": shutil.which("nmap") is not None,
             "ffuf": shutil.which("ffuf") is not None,
             "sqlmap": shutil.which("sqlmap") is not None,
         },
-        "sessions": [s["name"] for s in list_sessions()],
+        "sessions": [s["name"] for s in sessions],
+        "findings": findings[:50],
     }
 
 
@@ -799,10 +816,20 @@ def validate_engine_plan_request(payload):
                     moodle_info = None
                 else:
                     raise
+    mapping = _current_mapping()
+    if goal == "msf_targeted" and isinstance(payload.get("findings"), list):
+        # Findings aportados por el usuario para correlacionar:
+        # sustituyen a los del mapeo (validados, no inventados).
+        msf = _load_msf()
+        try:
+            mapping["findings"] = msf.validate_findings(
+                payload.get("findings"))
+        except msf.ValidationError as exc:
+            raise ValidationError(str(exc))
     try:
         plan = engine.generate_plan(
             goal, target, scope, confirmed,
-            mapping=_current_mapping(), moodle=moodle_info)
+            mapping=mapping, moodle=moodle_info)
     except engine.ValidationError as exc:
         raise ValidationError(str(exc))
     return {"plan": plan, "moodle_request": moodle_request}
@@ -857,6 +884,18 @@ def run_engine_plan(approved):
     step_results = []
     live_plan = json.loads(json.dumps(plan, ensure_ascii=False))
     stopped = False
+    if plan.get("confirm_written_authorization"):
+        # El plan se generó con la casilla sin marcar y los pasos
+        # MSF de ejecución quedaron blocked por eso; al confirmar
+        # la ejecución con la casilla marcada, esos pasos vuelven
+        # a pending. Los bloqueos por otras causas (p. ej. sesión
+        # Moodle ausente) no se tocan.
+        for step in live_plan["steps"]:
+            if (step.get("status") == "blocked"
+                    and "sin autorización confirmada"
+                    in (step.get("blocked_reason") or "")):
+                step["status"] = "pending"
+                step.pop("blocked_reason", None)
 
     def context():
         return {
@@ -902,7 +941,11 @@ def run_engine_plan(approved):
             results[step_id] = result
             step_results.append(result)
             continue
-        if step["tool"] == "moodle_sqli":
+        if step["tool"] == "engine":
+            result = _run_engine_mapping_step(plan, step)
+        elif step["tool"] == "msf":
+            result = _run_engine_msf_step(plan, step, results)
+        elif step["tool"] == "moodle_sqli":
             result = _run_engine_moodle_step(
                 plan, step, moodle_request)
         else:
@@ -933,6 +976,147 @@ def run_engine_plan(approved):
 def _truncate(text, limit=4000):
     text = text or ""
     return text if len(text) <= limit else text[:limit] + "\n… (recortado)"
+
+
+def _run_engine_mapping_step(plan, step):
+    """One mapping step: read existing sessions + findings (no scan).
+
+    The findings are the fixed target's mapping: the msf_correlate
+    step uses them, and they stay in the run evidence.
+    """
+    sessions = list_sessions()
+    findings = []
+    for session in sessions[:5]:
+        try:
+            findings.extend(read_findings(session["name"]))
+        except (FileNotFoundError, ValueError, OSError):
+            continue
+    findings = findings[:50]
+    return {
+        "id": step["id"], "action": step["action"],
+        "tool": "engine", "status": "completed",
+        "sessions": len(sessions),
+        "findings": findings,
+        "result": {
+            "sessions": len(sessions),
+            "findings_count": len(findings),
+        },
+        "reason": "",
+    }
+
+
+def _run_engine_msf_step(plan, step, results, token=None):
+    """One MSF step of the msf_targeted goal.
+
+    msf_correlate is read-only: it correlates the mapping's
+    findings with Metasploit modules (no checkbox needed). Without
+    candidates it is skipped and the plan continues. msf_check /
+    msf_run take the first candidate (best rank) of the first
+    finding with candidates, with options from the module's own
+    defaults (RHOSTS = the fixed target, LHOST = 127.0.0.1); a
+    reverse payload starts its handler first, through the same
+    MCP connection, as run_msf_plan already does.
+    """
+    msf = _load_msf()
+    base = {
+        "id": step["id"], "action": step["action"], "tool": "msf",
+    }
+    if step["id"] == "msf_correlate":
+        findings = []
+        mapping = results.get("mapping") or {}
+        if isinstance(mapping.get("findings"), list):
+            findings = mapping["findings"]
+        if not findings:
+            findings = plan.get("msf_findings") or []
+        try:
+            clean = msf.validate_findings(findings)
+        except msf.ValidationError:
+            clean = []
+        client = _msf_client(token)
+        try:
+            client.initialize()
+            correlations = msf.correlate_modules(client, clean)
+        except msf.MsfNotConnected:
+            return dict(base, status="skipped", connected=False,
+                        correlations=[],
+                        reason=MSF_NOT_CONNECTED_MSG,
+                        result={"connected": False, "correlations": []})
+        except msf.MsfError as exc:
+            return dict(base, status="failed", connected=True,
+                        correlations=[],
+                        reason=str(exc),
+                        result={"connected": True, "correlations": []})
+        total = sum(len(c.get("modules") or []) for c in correlations)
+        if total == 0:
+            return dict(base, status="skipped", connected=True,
+                        correlations=correlations,
+                        reason="sin módulos candidatos para los findings",
+                        result={"connected": True,
+                                "correlations": correlations})
+        return dict(base, status="completed", connected=True,
+                    correlations=correlations, reason="",
+                    result={"connected": True,
+                            "correlations": correlations})
+    # msf_check / msf_run: first candidate of msf_correlate.
+    corr = results.get("msf_correlate") or {}
+    correlations = (corr.get("result") or {}).get("correlations")
+    if correlations is None:
+        correlations = corr.get("correlations") or []
+    chosen = None
+    for entry in correlations:
+        if isinstance(entry, dict) and entry.get("modules"):
+            chosen = entry["modules"][0]
+            break
+    if chosen is None:
+        return dict(base, status="failed",
+                    reason="sin módulo candidato para check/run")
+    module_type = chosen.get("type") or "exploit"
+    name = chosen["name"]
+    action = "check" if step["id"] == "msf_check" else "run"
+    client = _msf_client(token)
+    try:
+        client.initialize()
+    except msf.MsfNotConnected:
+        return dict(base, status="failed",
+                    reason=MSF_NOT_CONNECTED_MSG)
+    except msf.MsfError as exc:
+        return dict(base, status="failed", reason=str(exc))
+    gate = _msf_require_dangerous(client)
+    if gate:
+        return dict(base, status="failed", reason=gate)
+    try:
+        info = client.module_info(module_type, name)
+    except msf.MsfError:
+        info = {}
+    try:
+        options = msf.default_options_from_info(info, plan["target"])
+        msf_plan = msf.validate_msf_plan({
+            "type": module_type, "name": name,
+            "action": action, "options": options})
+    except msf.ValidationError as exc:
+        return dict(base, status="failed", reason=str(exc))
+    try:
+        result = run_msf_plan(msf_plan, token)
+    except msf.MsfToolError as exc:
+        if _msf_is_dangerous_error(exc):
+            return dict(base, status="failed",
+                        reason=DANGEROUS_DISABLED_MSG)
+        return dict(base, status="failed", reason=str(exc))
+    except msf.MsfError as exc:
+        return dict(base, status="failed", reason=str(exc))
+    status = "completed" if result.get("status") == "completed" else "failed"
+    return dict(
+        base, status=status,
+        module="%s/%s" % (module_type, name),
+        options_redacted=msf_plan["options_redacted"],
+        run_id=result.get("run_id"),
+        handler=result.get("handler"),
+        handler_error=result.get("handler_error"),
+        sessions_linked=result.get("sessions_linked") or [],
+        evidence_dir=result.get("evidence_dir"),
+        result=result.get("result"),
+        reason="" if status == "completed"
+        else "el módulo terminó con estado %s" % result.get("status"))
 
 
 def _run_engine_pentestx_step(plan, step):
@@ -1628,6 +1812,50 @@ class Handler(BaseHTTPRequestHandler):
                     modules = data
                 self._send_json(200, {
                     "connected": True, "modules": modules})
+            elif path == "/api/msf/correlate":
+                # Correlación findings → módulos Metasploit, solo
+                # lectura del MCP: no necesita casilla ni acciones
+                # peligrosas. Sin conexión con msfmcpd devuelve
+                # lista vacía con el mensaje, nunca módulos
+                # inventados. El target se valida con la allowlist.
+                msf = _load_msf()
+                payload = self._read_json()
+                try:
+                    target = validate_target(payload.get("target"))
+                except ValidationError as exc:
+                    self._send_json(409, {"error": str(exc)})
+                    return
+                try:
+                    findings = msf.validate_findings(
+                        payload.get("findings"))
+                except msf.ValidationError as exc:
+                    raise ValidationError(str(exc))
+                if not findings:
+                    self._send_json(200, {
+                        "connected": None,
+                        "target": target,
+                        "correlations": [],
+                        "message": "sin findings para correlacionar"})
+                    return
+                token = _msf_token(payload)
+                client = _msf_client(token)
+                try:
+                    client.initialize()
+                    correlations = msf.correlate_modules(client, findings)
+                except msf.MsfNotConnected:
+                    self._send_json(200, {
+                        "connected": False,
+                        "target": target,
+                        "correlations": [],
+                        "error": MSF_NOT_CONNECTED_MSG})
+                    return
+                except msf.MsfError as exc:
+                    self._send_json(502, {"error": str(exc)})
+                    return
+                self._send_json(200, {
+                    "connected": True,
+                    "target": target,
+                    "correlations": correlations})
             elif path == "/api/msf/module-info":
                 msf = _load_msf()
                 payload = self._read_json()

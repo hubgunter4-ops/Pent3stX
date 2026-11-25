@@ -122,13 +122,14 @@ Start queda deshabilitado. No hay modo simulación.
   confirm_written_authorization}`. Solo con dry-run previo del
   comando exacto y la casilla marcada; sin casilla, 409 sin
   ejecutar. La sonda no usa `scope.yaml`: solo necesita la casilla.
-- `GET /api/engine/goals` — los 3 goals del motor con descripción,
+- `GET /api/engine/goals` — los 4 goals del motor con descripción,
   requisitos y pasos.
 - `POST /api/engine/plan` — `{goal, target, scope,
-  confirm_written_authorization?, moodle?}`. Genera el plan sin
+  confirm_written_authorization?, moodle?, findings?}`. Genera el plan sin
   ejecutar nada; lo deja aprobado en memoria del servidor. Sin la
   casilla marcada, el plan dice "sin autorización confirmada" y
-  sirve como medición del scope.
+  sirve como medición del scope. Para `msf_targeted`, `findings`
+  (opcional) sustituye a los findings del mapeo al correlacionar.
 - `POST /api/engine/run` — `{confirm: true,
   confirm_written_authorization}`. La ejecución exige la casilla
   marcada; sin ella, 409. Los pasos pentestx exigen además una
@@ -148,6 +149,12 @@ Start queda deshabilitado. No hay modo simulación.
   options}`. Valida el módulo y sus opciones y devuelve el plan
   exacto; con payload reverse incluye el handler
   `exploit/multi/handler` que se arrancará antes. No ejecuta nada.
+- `POST /api/msf/correlate` — `{target, findings}`. Correlación
+  findings → módulos Metasploit, solo lectura del MCP (sin casilla):
+  por CVE exacto, por servicio y por puerto conocido. Devuelve por
+  finding los módulos candidatos con rango y motivo. Sin conexión
+  con `msfmcpd`, lista vacía con el mensaje; sin findings, vacío.
+  Target fuera de la allowlist → 409.
 - `POST /api/msf/check` y `POST /api/msf/run` — `{confirm: true,
   confirm_written_authorization}`. Exigen plan aprobado y la
   casilla marcada; sin casilla, 409; con las acciones peligrosas
@@ -165,13 +172,18 @@ Menú **Assessments → Motor: generar plan**: a partir del mapeo
 pasos ordenados para un goal, sin ejecutar nada. Los goals son
 `owasp_report` (pasiva → OWASP web → vulnerabilidad → correlación
 → reporte), `full_assessment` (añade activa e intrusiva con nmap;
-sin nmap esos pasos se saltan con aviso) y `moodle_sqli_confirm`
+sin nmap esos pasos se saltan con aviso), `moodle_sqli_confirm`
 (detección Moodle y, si es vulnerable, extracción acotada de
-`database()` y `username`, nunca password). El plan se muestra paso
-a paso en **Plan Overview**; tras confirmarlo se ejecuta paso a
-paso, con la salida real por paso en la consola verde. Diseño y
-reglas en [`web-ui/engine/DESIGN.md`](engine/DESIGN.md); el motor
-es `web-ui/engine/engine.py` (solo stdlib, determinista, sin LLM).
+`database()` y `username`, nunca password) y `msf_targeted`
+(mapeo → vulnerabilidad → correlación → correlación findings →
+módulos Metasploit → check y ejecución del módulo correlacionado,
+solo con casilla). El plan se muestra paso a paso en **Plan
+Overview**; tras confirmarlo se ejecuta paso a paso, con la salida
+real por paso en la consola verde. La tabla de correlación del goal
+`msf_targeted` aparece también en Plan Overview, con botón "Usar"
+por módulo. Diseño y reglas en
+[`web-ui/engine/DESIGN.md`](engine/DESIGN.md); el motor es
+`web-ui/engine/engine.py` (solo stdlib, determinista, sin LLM).
 
 ## Herramienta aparte: Moodle SQLi (local)
 
@@ -198,7 +210,14 @@ sobre el MCP oficial de Metasploit (`msfmcpd`), en
 Lectura sin casilla (buscar módulos, ver sesiones); check, run y
 detener sesiones solo con la casilla de autorización marcada.
 Targets solo `contaia.site` y `127.0.0.1`; `LHOST` solo
-`127.0.0.1`. Un payload reverse arranca antes su handler
+`127.0.0.1`. El target de Config es el objetivo fijado: el diálogo
+MSF lo pre-rellena como RHOSTS y el motor se lo pasa a los pasos
+MSF; Moodle usa su propio fijo (`127.0.0.1:8080/moodle`). El
+diálogo trae además **Correlación findings → módulos**: toma los
+findings de una sesión (o los pegados en JSON) y muestra por
+finding los módulos candidatos con rango y motivo, con botón
+"Usar" que carga el módulo con el target ya fijado. Un payload
+reverse arranca antes su handler
 `exploit/multi/handler` por la misma conexión MCP (el handler es
 un job del framework, no hace falta una segunda conexión) y la
 sesión entrante se vincula a esa ejecución y aparece en la tabla

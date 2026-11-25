@@ -32,7 +32,7 @@ from msf import msf_client as msf  # noqa: E402
 
 FAKE_MODULES = [
     {"type": "exploit", "name": "windows/smb/ms17_010_eternalblue",
-     "description": "MS17-010 EternalBlue SMB RCE (mock)"},
+     "description": "MS17-010 EternalBlue SMB RCE CVE-2017-0144 (mock)"},
     {"type": "auxiliary", "name": "scanner/smb/smb_version",
      "description": "SMB version scanner (mock)"},
     {"type": "exploit", "name": "multi/handler",
@@ -43,7 +43,7 @@ FAKE_MODULE_INFO = {
     ("exploit", "windows/smb/ms17_010_eternalblue"): {
         "name": "windows/smb/ms17_010_eternalblue",
         "type": "exploit",
-        "description": "MS17-010 EternalBlue SMB RCE (mock)",
+        "description": "MS17-010 EternalBlue SMB RCE CVE-2017-0144 (mock)",
         "options": [
             {"name": "RHOSTS", "required": True, "default": "",
              "description": "The target host(s)"},
@@ -440,6 +440,140 @@ class TestMsfValidation(unittest.TestCase):
                                   msf.validate_session_id, bad)
 
 
+class FakeSearchClient:
+    """search_modules over FAKE_MODULES, like the mock server."""
+
+    def __init__(self):
+        self.queries = []
+
+    def search_modules(self, query, limit=100):
+        self.queries.append(query)
+        q = query.lower()
+        return {"modules": [m for m in FAKE_MODULES
+                            if not q or q in
+                            (m["name"] + " " + m["description"] + " "
+                             + m["type"]).lower()]}
+
+
+class TestMsfCorrelate(unittest.TestCase):
+    def test_correlate_cve_match(self):
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"id": "CVE-2017-0144", "title": "MS17-010 SMB"}])
+        self.assertEqual(len(correlations), 1)
+        modules = correlations[0]["modules"]
+        self.assertEqual(len(modules), 1)
+        self.assertEqual(
+            modules[0]["name"], "windows/smb/ms17_010_eternalblue")
+        self.assertEqual(modules[0]["type"], "exploit")
+        self.assertEqual(modules[0]["rank"], 1)
+        self.assertIn("CVE-2017-0144", modules[0]["reason"])
+        # El CVE se busca una sola vez, aunque el finding lo traiga
+        # en id y en title.
+        self.assertEqual(client.queries, ["CVE-2017-0144"])
+
+    def test_correlate_cve_from_text(self):
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"id": "F-1", "title": "EternalBlue CVE-2017-0144 en SMB"}])
+        self.assertEqual(
+            correlations[0]["modules"][0]["name"],
+            "windows/smb/ms17_010_eternalblue")
+        self.assertEqual(correlations[0]["modules"][0]["rank"], 1)
+
+    def test_correlate_service_match(self):
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"title": "SMB abierto", "service": "smb", "port": 445}])
+        names = [m["name"] for m in correlations[0]["modules"]]
+        self.assertIn("windows/smb/ms17_010_eternalblue", names)
+        self.assertIn("scanner/smb/smb_version", names)
+        self.assertTrue(all(m["rank"] == 2
+                            for m in correlations[0]["modules"]))
+        self.assertEqual(client.queries, ["smb"])
+
+    def test_correlate_port_match(self):
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"title": "puerto abierto", "port": 445}])
+        modules = correlations[0]["modules"]
+        self.assertTrue(modules)
+        self.assertTrue(all(m["rank"] == 3 for m in modules))
+        self.assertEqual(client.queries, ["smb"])
+
+    def test_correlate_cve_beats_service(self):
+        # Un finding con CVE y servicio: el módulo que coincide
+        # por CVE queda con rango 1, no 2.
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"id": "CVE-2017-0144", "title": "MS17-010",
+             "service": "smb", "port": 445}])
+        modules = correlations[0]["modules"]
+        eternalblue = [m for m in modules
+                       if m["name"] == "windows/smb/ms17_010_eternalblue"]
+        self.assertEqual(eternalblue[0]["rank"], 1)
+        self.assertEqual(set(client.queries), {"CVE-2017-0144", "smb"})
+
+    def test_correlate_no_match_empty(self):
+        client = FakeSearchClient()
+        correlations = msf.correlate_modules(client, [
+            {"title": "Oracle expuesto", "service": "oracle",
+             "port": 1521}])
+        self.assertEqual(correlations[0]["modules"], [])
+
+    def test_correlate_no_findings_empty(self):
+        client = FakeSearchClient()
+        self.assertEqual(msf.correlate_modules(client, []), [])
+        self.assertEqual(client.queries, [])
+
+    def test_correlate_shared_query_once(self):
+        client = FakeSearchClient()
+        msf.correlate_modules(client, [
+            {"id": "CVE-2017-0144", "title": "a"},
+            {"id": "CVE-2017-0144", "title": "b", "service": "smb"}])
+        self.assertEqual(client.queries.count("CVE-2017-0144"), 1)
+        self.assertEqual(client.queries.count("smb"), 1)
+
+    def test_validate_findings(self):
+        self.assertEqual(msf.validate_findings(None), [])
+        self.assertEqual(msf.validate_findings([]), [])
+        with self.assertRaises(msf.ValidationError):
+            msf.validate_findings([{"port": 99999}])
+        with self.assertRaises(msf.ValidationError):
+            msf.validate_findings(["no-es-un-dict"])
+        with self.assertRaises(msf.ValidationError):
+            msf.validate_findings([{}])
+        with self.assertRaises(msf.ValidationError):
+            msf.validate_findings(
+                [{"id": "x"}] * (msf.MAX_CORRELATE_FINDINGS + 1))
+        clean = msf.validate_findings(
+            [{"id": "F1", "service": "SMB ", "port": "445"}])
+        self.assertEqual(clean[0]["service"], "SMB")
+        self.assertEqual(clean[0]["port"], 445)
+
+    def test_default_options_from_info(self):
+        info = FAKE_MODULE_INFO[
+            ("exploit", "windows/smb/ms17_010_eternalblue")]
+        options = msf.default_options_from_info(info, "127.0.0.1")
+        self.assertEqual(options["RHOSTS"], "127.0.0.1")
+        self.assertEqual(options["RPORT"], 445)
+        self.assertEqual(options["PAYLOAD"],
+                         "windows/meterpreter/reverse_tcp")
+        self.assertEqual(options["LHOST"], "127.0.0.1")
+        self.assertEqual(options["LPORT"], 4444)
+        # El target fijado manda sobre el default del módulo.
+        options = msf.default_options_from_info(info, "contaia.site")
+        self.assertEqual(options["RHOSTS"], "contaia.site")
+        # Un default con pinta de secreto nunca se envía.
+        options = msf.default_options_from_info({
+            "options": [{"name": "SMBPass", "default": "secreto",
+                         "required": False},
+                        {"name": "RHOSTS", "default": "",
+                         "required": True}]}, "127.0.0.1")
+        self.assertNotIn("SMBPass", options)
+        self.assertEqual(options["RHOSTS"], "127.0.0.1")
+
+
 class TestMsfEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -727,6 +861,58 @@ class TestMsfEndpoints(unittest.TestCase):
         self.assertEqual(status, 200, polled)
         self.assertEqual(polled["data"]["status"], "completed")
         self.assertEqual(polled["data"]["result"]["code"], "Vulnerable")
+
+    def test_correlate_cve_endpoint(self):
+        # La correlación es solo lectura: no se envía confirm ni
+        # casilla y funciona igual.
+        status, data = http_json(self.base, "POST", "/api/msf/correlate", {
+            "target": "127.0.0.1",
+            "findings": [{"id": "CVE-2017-0144", "title": "MS17-010"}]})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["connected"])
+        self.assertEqual(len(data["correlations"]), 1)
+        modules = data["correlations"][0]["modules"]
+        self.assertEqual(len(modules), 1)
+        self.assertEqual(
+            modules[0]["name"], "windows/smb/ms17_010_eternalblue")
+        self.assertEqual(modules[0]["rank"], 1)
+
+    def test_correlate_service_endpoint(self):
+        status, data = http_json(self.base, "POST", "/api/msf/correlate", {
+            "target": "contaia.site",
+            "findings": [{"title": "SMB abierto", "service": "smb",
+                          "port": 445}]})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["connected"])
+        names = [m["name"] for m in data["correlations"][0]["modules"]]
+        self.assertIn("windows/smb/ms17_010_eternalblue", names)
+        self.assertIn("scanner/smb/smb_version", names)
+
+    def test_correlate_no_mcp_empty(self):
+        os.environ["MSF_MCP_URL"] = "http://127.0.0.1:1/"
+        try:
+            status, data = http_json(
+                self.base, "POST", "/api/msf/correlate", {
+                    "target": "127.0.0.1",
+                    "findings": [{"id": "CVE-2017-0144"}]})
+        finally:
+            os.environ["MSF_MCP_URL"] = self.mock_url
+        self.assertEqual(status, 200, data)
+        self.assertFalse(data["connected"])
+        self.assertEqual(data["correlations"], [])
+        self.assertIn("msfmcpd", data["error"])
+
+    def test_correlate_bad_target_409(self):
+        status, data = http_json(self.base, "POST", "/api/msf/correlate", {
+            "target": "example.com",
+            "findings": [{"id": "CVE-2017-0144"}]})
+        self.assertEqual(status, 409, data)
+
+    def test_correlate_empty_findings(self):
+        status, data = http_json(self.base, "POST", "/api/msf/correlate", {
+            "target": "127.0.0.1", "findings": []})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["correlations"], [])
 
 
 if __name__ == "__main__":

@@ -41,7 +41,8 @@ class TestGoals(unittest.TestCase):
         goals = engine.list_goals()
         self.assertEqual(
             {g["goal"] for g in goals},
-            {"owasp_report", "full_assessment", "moodle_sqli_confirm"})
+            {"owasp_report", "full_assessment", "moodle_sqli_confirm",
+             "msf_targeted"})
         for goal in goals:
             self.assertTrue(goal["description"])
             self.assertTrue(goal["steps"])
@@ -191,6 +192,148 @@ class TestMoodleGoal(unittest.TestCase):
         plan = _plan("moodle_sqli_confirm", target="127.0.0.1",
                      moodle=moodle)
         self.assertEqual(_step(plan, "moodle_detect")["status"], "blocked")
+
+
+class TestMsfTargetedGoal(unittest.TestCase):
+    FINDINGS = [
+        {"id": "CVE-2017-0144", "title": "MS17-010 SMB",
+         "service": "smb", "port": 445},
+    ]
+
+    def _msf_plan(self, **kw):
+        args = {
+            "goal": "msf_targeted",
+            "target": "127.0.0.1",
+            "scope": "active",
+            "confirm_written_authorization": True,
+            "mapping": {"findings": self.FINDINGS},
+        }
+        args.update(kw)
+        return engine.generate_plan(**args)
+
+    def test_msf_targeted_plan_steps(self):
+        plan = self._msf_plan()
+        self.assertEqual(
+            _step_ids(plan),
+            ["mapping", "vulnerability", "correlate", "msf_correlate",
+             "msf_check", "msf_run", "report"])
+        self.assertEqual(plan["pipeline_profile"], "with_owasp")
+        self.assertEqual(plan["scope"], "active")
+        self.assertEqual(plan["msf_findings"], self.FINDINGS)
+        self.assertEqual(_step(plan, "mapping")["tool"], "engine")
+        self.assertEqual(_step(plan, "msf_correlate")["tool"], "msf")
+        self.assertEqual(_step(plan, "msf_check")["tool"], "msf")
+        self.assertEqual(_step(plan, "msf_run")["tool"], "msf")
+        # Sin casilla en mano, todos pendientes; el comando de
+        # muestra de los pasos MSF no inventa ningún módulo.
+        for step_id in ("mapping", "msf_correlate", "msf_check",
+                        "msf_run"):
+            self.assertEqual(_step(plan, step_id)["status"], "pending")
+        self.assertIn("candidato",
+                      " ".join(_step(plan, "msf_check")["dry_run_command"]))
+        self.assertNotIn("ms17_010",
+                          " ".join(_step(plan, "msf_check")["dry_run_command"]))
+
+    def test_msf_targeted_requires_active_scope(self):
+        with self.assertRaises(engine.ValidationError):
+            self._msf_plan(scope="passive")
+
+    def test_msf_targeted_blocked_without_checkbox(self):
+        # Sin la casilla marcada, check y run quedan blocked; la
+        # correlación (solo lectura) y el mapeo siguen pendientes.
+        plan = self._msf_plan(confirm_written_authorization=False)
+        self.assertEqual(_step(plan, "mapping")["status"], "pending")
+        self.assertEqual(
+            _step(plan, "msf_correlate")["status"], "pending")
+        self.assertEqual(_step(plan, "msf_check")["status"], "blocked")
+        self.assertEqual(_step(plan, "msf_run")["status"], "blocked")
+        self.assertIn("sin autorización confirmada",
+                      _step(plan, "msf_check")["blocked_reason"])
+        self.assertTrue(any("msf_check" in w for w in plan["warnings"]))
+
+    def test_msf_candidates_precondition(self):
+        step = {"preconditions": [{"type": "msf_candidates"}]}
+        # Sin resultado de msf_correlate todavía: aún no decidible.
+        ok, _ = engine.check_preconditions(step, {"results": {}})
+        self.assertTrue(ok)
+        # Con candidatos: cumplida.
+        ok, _ = engine.check_preconditions(step, {"results": {
+            "msf_correlate": {"status": "completed", "result": {
+                "correlations": [{"finding": {"id": "CVE-2017-0144"},
+                                  "modules": [{"name": "windows/smb/x",
+                                               "type": "exploit",
+                                               "rank": 1,
+                                               "reason": "CVE"}]}]}}}})
+        self.assertTrue(ok)
+        # Sin candidatos: no cumplida.
+        ok, reason = engine.check_preconditions(step, {"results": {
+            "msf_correlate": {"status": "skipped", "result": {
+                "correlations": [{"finding": {"id": "x"},
+                                  "modules": []}]}}}})
+        self.assertFalse(ok)
+        self.assertIn("candidatos", reason)
+
+    def test_msf_checked_precondition(self):
+        step = {"preconditions": [{"type": "msf_checked"}]}
+        ok, _ = engine.check_preconditions(step, {"results": {}})
+        self.assertTrue(ok)
+        ok, _ = engine.check_preconditions(step, {"results": {
+            "msf_check": {"status": "completed"}}})
+        self.assertTrue(ok)
+        ok, reason = engine.check_preconditions(step, {"results": {
+            "msf_check": {"status": "failed"}}})
+        self.assertFalse(ok)
+        self.assertIn("msf_check", reason)
+
+    def test_replan_no_candidates_skips_check_and_run(self):
+        plan = self._msf_plan()
+        results = {
+            "mapping": {"status": "completed"},
+            "vulnerability": {"status": "completed"},
+            "correlate": {"status": "completed"},
+            "msf_correlate": {
+                "status": "skipped",
+                "result": {"correlations": [
+                    {"finding": {"id": "CVE-2017-0144"},
+                     "modules": []}]},
+            },
+        }
+        new = engine.replan(plan, results,
+                            context={"tools_available": {}})
+        # Sin candidatos, check queda saltado; el reporte sigue
+        # pendiente (su precondición acepta "skipped").
+        self.assertEqual(_step(new, "msf_check")["status"], "skipped")
+        self.assertIn("candidatos",
+                      _step(new, "msf_check")["blocked_reason"])
+        self.assertEqual(_step(new, "report")["status"], "pending")
+        # En la siguiente re-planificación, con msf_check ya
+        # registrado como saltado, msf_run también queda saltado
+        # (su precondición msf_checked ya es decidible y falla).
+        results["msf_check"] = {"status": "skipped"}
+        new = engine.replan(new, results,
+                            context={"tools_available": {}})
+        self.assertEqual(_step(new, "msf_run")["status"], "skipped")
+        self.assertEqual(_step(new, "report")["status"], "pending")
+
+    def test_replan_with_candidates_keeps_check(self):
+        plan = self._msf_plan()
+        results = {
+            "mapping": {"status": "completed"},
+            "vulnerability": {"status": "completed"},
+            "correlate": {"status": "completed"},
+            "msf_correlate": {
+                "status": "completed",
+                "result": {"correlations": [
+                    {"finding": {"id": "CVE-2017-0144"},
+                     "modules": [{"name": "windows/smb/ms17_010",
+                                  "type": "exploit", "rank": 1,
+                                  "reason": "CVE"}]}]},
+            },
+        }
+        new = engine.replan(plan, results,
+                            context={"tools_available": {}})
+        self.assertEqual(_step(new, "msf_check")["status"], "pending")
+        self.assertEqual(_step(new, "msf_run")["status"], "pending")
 
 
 class TestReplan(unittest.TestCase):

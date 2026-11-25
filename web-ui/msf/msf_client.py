@@ -382,6 +382,251 @@ def plan_summary(plan):
     return "\n".join(lines)
 
 
+# -- correlación findings → módulos ------------------------------------
+
+CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+MAX_CORRELATE_FINDINGS = 50
+MAX_MODULES_PER_FINDING = 5
+
+# Puerto conocido → servicio que escucha ahí. Solo sirve para
+# derivar la consulta de búsqueda cuando el finding trae puerto
+# pero no nombre de servicio.
+PORT_SERVICE = {
+    21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp", 53: "dns",
+    80: "http", 110: "pop3", 143: "imap", 443: "https", 445: "smb",
+    993: "imaps", 995: "pop3s", 1433: "mssql", 1521: "oracle",
+    3306: "mysql", 3389: "rdp", 5432: "postgresql", 5900: "vnc",
+    6379: "redis", 8080: "http", 8443: "https", 27017: "mongodb",
+}
+
+
+def validate_findings(findings):
+    """Validate a findings list for correlation; returns a clean copy.
+
+    Each finding is a dict; only id/title/cve/service/port/
+    description are kept (strings capped at 2 KB, port 1-65535).
+    At most MAX_CORRELATE_FINDINGS findings; an empty list is
+    valid (there is nothing to correlate).
+    """
+    if findings is None:
+        return []
+    if not isinstance(findings, list):
+        raise ValidationError("findings debe ser una lista")
+    if len(findings) > MAX_CORRELATE_FINDINGS:
+        raise ValidationError(
+            "demasiados findings para correlacionar (máximo %d)"
+            % MAX_CORRELATE_FINDINGS)
+    clean = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise ValidationError("cada finding debe ser un objeto JSON")
+        item = {}
+        for key in ("id", "title", "cve", "service", "description"):
+            value = finding.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValidationError(
+                    "el campo %s del finding debe ser texto" % key)
+            if len(value.encode("utf-8")) > 2048:
+                raise ValidationError(
+                    "el campo %s del finding supera los 2 KB" % key)
+            item[key] = value.strip()
+        port = finding.get("port")
+        if port is not None:
+            if isinstance(port, str):
+                if not port.isdigit():
+                    raise ValidationError(
+                        "port debe ser un puerto 1-65535")
+                port = int(port)
+            if not isinstance(port, int) or isinstance(port, bool) \
+                    or not 1 <= port <= 65535:
+                raise ValidationError("port debe ser un puerto 1-65535")
+            item["port"] = port
+        if not item.get("id") and not item.get("title"):
+            raise ValidationError(
+                "cada finding necesita al menos id o title")
+        clean.append(item)
+    return clean
+
+
+def _finding_cve(finding):
+    """The CVE of a finding: explicit field, else one in its text."""
+    cve = (finding.get("cve") or "").strip().upper()
+    if CVE_RE.fullmatch(cve):
+        return cve
+    text = " ".join(str(finding.get(k) or "") for k in
+                    ("id", "title", "description"))
+    match = CVE_RE.search(text)
+    return match.group(0).upper() if match else None
+
+
+def _finding_service(finding):
+    """Service name of a finding: explicit field only.
+
+    The port-derived service is a separate, lower-rank rule (c)
+    and is handled by the caller, not here: deriving it here
+    would promote a port match to a service match (rank 2).
+    """
+    service = (finding.get("service") or "").strip().lower()
+    if service:
+        token = re.split(r"[\s(/:]+", service)[0]
+        token = re.sub(r"[^a-z0-9]", "", token)
+        if token:
+            return token
+    return None
+
+
+def _module_text(module):
+    return " ".join(str(module.get(k) or "") for k in
+                    ("name", "fullname", "title", "description"))
+
+
+def _token_in_text(token, text):
+    # El token como palabra (con sufijo opcional: "http" vale en
+    # "https", "smb" en "smb_version").
+    return re.search(
+        r"\b" + re.escape(token) + r"\w*", text.lower()) is not None
+
+
+def correlate_modules(client, findings):
+    """Match findings to Metasploit modules, read-only.
+
+    ``client`` only needs ``search_modules(query, limit)`` (the
+    read-only search tool of msfmcpd; no checkbox, no dangerous
+    actions). Match rules, in order: (a) exact CVE in the module
+    name/description; (b) service name in the module; (c) service
+    derived from the finding's port. Each search query runs once
+    even if several findings share it. A module only counts as a
+    candidate when the token is actually in its name/description:
+    without that, the finding gets no candidates — a module is
+    never invented. Returns [{finding, modules: [{name, type,
+    rank, reason}]}] with modules ordered by rank then name,
+    at most MAX_MODULES_PER_FINDING per finding.
+    """
+    findings = validate_findings(findings)
+    if not findings:
+        return []
+    # Una consulta por token, con su mejor rango: el mismo CVE o
+    # servicio en varios findings se busca una sola vez.
+    queries = {}
+    for finding in findings:
+        cve = _finding_cve(finding)
+        if cve:
+            queries.setdefault(cve.upper(), (1, "cve"))
+        service = _finding_service(finding)
+        if service:
+            queries.setdefault(service, (2, "service"))
+        # (c) puerto: solo cuando el finding no trae servicio
+        # explícito (si lo trae, ya se buscó como servicio en (b)).
+        port = finding.get("port")
+        if port and not (finding.get("service") or "").strip():
+            derived = PORT_SERVICE.get(int(port))
+            if derived and derived not in queries:
+                queries[derived] = (3, "port")
+    # Buscar cada token una sola vez (solo lectura). Si todas las
+    # búsquedas fallan, la conexión se da por perdida.
+    results = {}
+    errors = 0
+    for query in queries:
+        try:
+            data = client.search_modules(query, 100)
+        except MsfError:
+            errors += 1
+            continue
+        modules = []
+        if isinstance(data, dict) and isinstance(data.get("modules"), list):
+            modules = data["modules"]
+        elif isinstance(data, list):
+            modules = data
+        results[query] = [m for m in modules if isinstance(m, dict)]
+    if queries and errors == len(queries):
+        raise MsfNotConnected(
+            "no se pudo buscar módulos en msfmcpd")
+    correlations = []
+    for finding in findings:
+        cve = _finding_cve(finding)
+        service = _finding_service(finding)
+        port = finding.get("port")
+        port_service = PORT_SERVICE.get(int(port)) if port else None
+        best = {}
+        for _query, (rank, kind) in sorted(
+                queries.items(), key=lambda kv: kv[1][0]):
+            for module in results.get(_query, []):
+                name = module.get("name")
+                if not name:
+                    continue
+                key = (module.get("type") or "", name)
+                text = _module_text(module)
+                if kind == "cve":
+                    if cve is None or cve not in text.upper():
+                        continue
+                    reason = "CVE %s en el módulo" % cve
+                elif kind == "service":
+                    if service is None or not _token_in_text(service, text):
+                        continue
+                    reason = "servicio %s en el módulo" % service
+                else:
+                    if (port_service is None
+                            or not _token_in_text(port_service, text)):
+                        continue
+                    reason = "puerto %s (%s) en el módulo" % (
+                        port, port_service)
+                if key not in best or rank < best[key]["rank"]:
+                    best[key] = {
+                        "name": name,
+                        "type": module.get("type") or "",
+                        "rank": rank,
+                        "reason": reason,
+                    }
+        modules = sorted(best.values(),
+                         key=lambda m: (m["rank"], m["name"]))
+        correlations.append({
+            "finding": {
+                "id": finding.get("id", ""),
+                "title": finding.get("title", ""),
+                "cve": cve or "",
+                "service": service or port_service or "",
+                "port": port or "",
+            },
+            "modules": modules[:MAX_MODULES_PER_FINDING],
+        })
+    return correlations
+
+
+def default_options_from_info(info, target):
+    """Build module options from msf_module_info defaults.
+
+    RHOST/RHOSTS always get the fixed target; LHOST always
+    127.0.0.1; other options take the module's declared default
+    when it has one. Secret-looking defaults are dropped (never
+    sent). Returns a validated options dict.
+    """
+    options = {}
+    raw = (info or {}).get("options")
+    entries = []
+    if isinstance(raw, list):
+        entries = [o for o in raw if isinstance(o, dict)]
+    elif isinstance(raw, dict):
+        entries = [{"name": k,
+                    "default": v.get("default")
+                    if isinstance(v, dict) else v}
+                   for k, v in raw.items()]
+    for opt in entries:
+        name = opt.get("name")
+        if not name or not isinstance(name, str):
+            continue
+        if name in TARGET_OPTION_KEYS:
+            options[name] = target
+        elif name in CALLBACK_HOST_KEYS:
+            options[name] = ALLOWED_LOCAL_HOST
+        elif "default" in opt and opt["default"] not in ("", None):
+            if _SECRET_KEY.search(name):
+                continue
+            options[name] = opt["default"]
+    return validate_options(options)
+
+
 # -- MCP client ---------------------------------------------------------
 
 def mcp_url_from_env():

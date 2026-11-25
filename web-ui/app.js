@@ -457,6 +457,13 @@
 
   function msfOpen() {
     document.getElementById("msfToken").value = "";
+    // Objetivo fijado: el target de Config, el mismo que usan
+    // Start, el motor y Moodle. Sin Config guardada, el valor
+    // por defecto de state.config (contaia.site).
+    document.getElementById("msfTarget").value = state.config.target;
+    document.getElementById("msfFindingsText").value = "";
+    document.getElementById("msfCorrelate").innerHTML = "";
+    msfLoadFindingsSessions();
     document.getElementById("msfQuery").value = "";
     document.getElementById("msfResults").innerHTML = "<li>Sin búsqueda todavía.</li>";
     document.getElementById("msfDetail").hidden = true;
@@ -465,6 +472,118 @@
     state.msfPlan = null;
     document.getElementById("msfDialog").showModal();
     msfRefreshStatus().then(function () { msfLoadSessions(); });
+  }
+
+  function msfLoadFindingsSessions() {
+    var sel = document.getElementById("msfFindingsSession");
+    api("/api/sessions").then(function (data) {
+      sel.innerHTML = "<option value=\"\">— elige una sesión —</option>";
+      (data.sessions || []).forEach(function (s) {
+        if (!s.findings) return;
+        var opt = document.createElement("option");
+        opt.value = s.name;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+      });
+    }).catch(function (err) {
+      log("[!!] No se pudieron cargar las sesiones: " + err.message);
+    });
+  }
+
+  /* Correlación findings → módulos (solo lectura del MCP). */
+  function msfCorrelate() {
+    var target = document.getElementById("msfTarget").value.trim() ||
+      state.config.target;
+    var pasted = document.getElementById("msfFindingsText").value.trim();
+    var session = document.getElementById("msfFindingsSession").value;
+    function run(findings) {
+      log("[*] Correlacionando " + findings.length + " findings con Metasploit (solo lectura)…");
+      api("/api/msf/correlate", {
+        method: "POST",
+        body: { target: target, findings: findings, mcp_token: msfToken() }
+      }, 60000).then(function (data) {
+        msfRenderCorrelations(data.correlations || [],
+          document.getElementById("msfCorrelate"));
+        if (data.connected === false) {
+          log("[!!] " + (data.error || "Metasploit no conectado"));
+        } else {
+          var total = 0;
+          (data.correlations || []).forEach(function (c) {
+            total += (c.modules || []).length;
+          });
+          log("[+] Correlación: " + total + " módulos candidatos para " +
+            (data.correlations || []).length + " findings.");
+        }
+      }).catch(function (err) {
+        log("[!!] Correlación fallida: " + err.message);
+      });
+    }
+    if (pasted) {
+      try {
+        var parsed = JSON.parse(pasted);
+        run(Array.isArray(parsed) ? parsed : (parsed.findings || []));
+      } catch (e) {
+        log("[!!] Los findings pegados no son JSON válido.");
+      }
+      return;
+    }
+    if (!session) {
+      log("[!!] Elige una sesión con findings o pega findings en JSON.");
+      return;
+    }
+    api("/api/findings?session=" + encodeURIComponent(session))
+      .then(function (f) { run(f.findings || []); })
+      .catch(function (err) {
+        log("[!!] No se pudieron leer los findings: " + err.message);
+      });
+  }
+
+  function msfRenderCorrelations(correlations, box) {
+    box.innerHTML = "";
+    if (!correlations.length) {
+      box.innerHTML = "<p class=\"muted\">Sin findings para correlacionar.</p>";
+      return;
+    }
+    var total = 0;
+    correlations.forEach(function (c) { total += (c.modules || []).length; });
+    if (!total) {
+      box.innerHTML = "<p class=\"muted\">Sin módulos candidatos para estos findings (Metasploit conectado, pero nada coincide).</p>";
+      return;
+    }
+    correlations.forEach(function (entry) {
+      var f = entry.finding || {};
+      var h = document.createElement("h4");
+      h.textContent = (f.id || f.title || "finding") +
+        (f.cve ? " — " + f.cve : "") +
+        (f.service ? " (" + f.service + (f.port ? ":" + f.port : "") + ")" : "");
+      box.appendChild(h);
+      var ul = document.createElement("ul");
+      ul.className = "msf-results";
+      (entry.modules || []).forEach(function (m) {
+        var li = document.createElement("li");
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = m.type + "/" + m.name +
+          " — rango " + m.rank + " (" + m.reason + ") — Usar";
+        btn.addEventListener("click", function () {
+          msfUseCandidate(m.type, m.name);
+        });
+        li.appendChild(btn);
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    });
+  }
+
+  function msfUseCandidate(type, name) {
+    // Carga el módulo y sus opciones en el diálogo MSF con el
+    // target ya fijado (msfTarget): msfRenderOptions lo usa como
+    // RHOSTS cuando el módulo no trae default.
+    log("[*] Módulo correlacionado cargado: " + type + "/" + name +
+      " (target fijado: " +
+      (document.getElementById("msfTarget").value.trim() ||
+        state.config.target) + ").");
+    msfSelectModule(type, name);
   }
 
   function msfSearch() {
@@ -543,7 +662,14 @@
       input.type = "text";
       input.setAttribute("data-msf-option", opt.name);
       var value = opt.default;
-      if (opt.name === "RHOSTS" && (value === "" || value === undefined || value === null)) value = state.config.target;
+      // RHOSTS pre-rellenado con el objetivo fijado (el campo
+      // Target del diálogo MSF, que viene de Config); LHOST solo
+      // 127.0.0.1. Sin Config guardada, state.config trae el
+      // valor por defecto (contaia.site).
+      if (opt.name === "RHOSTS" && (value === "" || value === undefined || value === null)) {
+        var fixed = document.getElementById("msfTarget").value.trim();
+        value = fixed || state.config.target;
+      }
       if (opt.name === "LHOST" && (value === "" || value === undefined || value === null)) value = "127.0.0.1";
       if (value !== undefined && value !== null) input.value = String(value);
       label.appendChild(input);
@@ -569,6 +695,13 @@
       return;
     }
     var options = msfCollectOptions();
+    // Si el módulo no declara RHOSTS, el objetivo fijado manda:
+    // el target de Config que lleva el diálogo MSF.
+    if (!options.RHOSTS && !options.RHOST) {
+      var fixedTarget = document.getElementById("msfTarget").value.trim() ||
+        state.config.target;
+      options.RHOSTS = fixedTarget;
+    }
     var payload = (options.PAYLOAD || "");
     var reverse = payload.toLowerCase().indexOf("reverse") !== -1;
     document.getElementById("msfReverseNote").hidden = !reverse;
@@ -697,10 +830,25 @@
   /* The Moodle sesskey/cookie live only in the dialog fields and in
      the plan request (memory); they are never saved to localStorage. */
 
+  /* Cada goal fija su scope: msf_targeted ejecuta módulos y
+     exige scope active, como full_assessment. */
+  var ENGINE_GOAL_SCOPES = {
+    owasp_report: "passive",
+    full_assessment: "active",
+    moodle_sqli_confirm: "passive",
+    msf_targeted: "active"
+  };
+
+  function syncEngineScope() {
+    var goal = document.getElementById("engineGoal").value;
+    document.getElementById("engineScope").value =
+      ENGINE_GOAL_SCOPES[goal] || state.config.scope;
+  }
+
   function fillEngineForm() {
     document.getElementById("engineGoal").value = "owasp_report";
     document.getElementById("engineTarget").value = state.config.target;
-    document.getElementById("engineScope").value = state.config.scope;
+    syncEngineScope();
     document.getElementById("engineAuth").checked = false;
     document.getElementById("engineMoodleBaseUrl").value = "http://127.0.0.1:8080/moodle";
     document.getElementById("engineMoodleSesskey").value = "";
@@ -727,8 +875,10 @@
       "Plan del motor: goal " + plan.goal + " | Target: " + plan.target +
       " | Scope: " + plan.scope + " | Pipeline: " + plan.pipeline_profile +
       " | " + (plan.authorization_note || "sin autorización confirmada") +
+      (plan.msf_findings ? " | Findings del mapeo: " + plan.msf_findings.length : "") +
       (plan.warnings && plan.warnings.length ? " | Avisos: " + plan.warnings.join("; ") : "") +
       ". Confirma para ejecutar paso a paso.";
+    document.getElementById("correlateResults").innerHTML = "";
     document.getElementById("mapHeader").textContent =
       "Plan del motor aprobado | Goal: " + plan.goal + " | Sin ejecutar todavía";
     showTab("plan");
@@ -791,12 +941,31 @@
           (step.session_dir ? " | sesión " + step.session_dir : ""));
         if (step.stdout) logLines(step.stdout);
         if (step.stderr) logLines(step.stderr);
+        if (step.module) {
+          log("    módulo: " + step.module +
+            (step.sessions_linked && step.sessions_linked.length ?
+              " | sesiones vinculadas: " + step.sessions_linked.join(", ") : ""));
+        }
         if (step.result && step.result.results) {
           Object.keys(step.result.results).forEach(function (k) {
             log("    " + k + ": " + step.result.results[k]);
           });
         }
       });
+      // La correlación findings → módulos del goal msf_targeted
+      // se muestra en Plan Overview, con botón "Usar" por módulo.
+      var correlations = [];
+      (res.steps || []).forEach(function (step) {
+        if (step.correlations) {
+          correlations = correlations.concat(step.correlations);
+        }
+      });
+      if (correlations.length) {
+        msfRenderCorrelations(
+          correlations, document.getElementById("correlateResults"));
+        log("[+] Correlación MSF en Plan Overview: " +
+          correlations.length + " findings con candidatos.");
+      }
       if (res.evidence_dir) log("[+] Evidencia: " + res.evidence_dir);
       var last = (res.steps || []).filter(function (step) { return step.session_dir; }).pop();
       if (last) {
@@ -1119,7 +1288,10 @@
     }
   });
 
-  document.getElementById("engineGoal").addEventListener("change", toggleEngineMoodleFields);
+  document.getElementById("engineGoal").addEventListener("change", function () {
+    toggleEngineMoodleFields();
+    syncEngineScope();
+  });
 
   document.getElementById("engineForm").addEventListener("submit", function (ev) {
     if (ev.submitter && ev.submitter.value === "cancel") return;
@@ -1159,6 +1331,7 @@
   });
 
   document.getElementById("msfSearchBtn").addEventListener("click", msfSearch);
+  document.getElementById("msfCorrelateBtn").addEventListener("click", msfCorrelate);
   document.getElementById("msfRefreshSessionsBtn").addEventListener("click", function () {
     msfRefreshStatus().then(function () { msfLoadSessions(); });
   });

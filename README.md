@@ -26,7 +26,7 @@ La página no simula nada: con el backend local corriendo, Start hace primero un
 
 Aparte, en `web-ui/tools/` vive la sonda Moodle SQLi local (CVE-2021-36393) como script separado: solo habla con el Moodle propio en `http://127.0.0.1:8080/moodle`, con dry-run y confirmación propios, y extrae únicamente `database()` y `username` (el hash de password quedó fuera a propósito). No toca `pentestx.py`; ver [`web-ui/tools/README.md`](web-ui/tools/README.md).
 
-En `web-ui/engine/` vive el motor de planificación por reglas: dado un goal (`owasp_report`, `full_assessment` o `moodle_sqli_confirm`) y el mapeo actual, genera un plan de pasos ordenados sin ejecutar nada, y luego lo ejecuta paso a paso con dry-run por paso y precondiciones. Diseño en [`web-ui/engine/DESIGN.md`](web-ui/engine/DESIGN.md).
+En `web-ui/engine/` vive el motor de planificación por reglas: dado un goal (`owasp_report`, `full_assessment`, `moodle_sqli_confirm` o `msf_targeted`) y el mapeo actual, genera un plan de pasos ordenados sin ejecutar nada, y luego lo ejecuta paso a paso con dry-run por paso y precondiciones. Diseño en [`web-ui/engine/DESIGN.md`](web-ui/engine/DESIGN.md).
 
 ## Inicio rápido
 
@@ -191,7 +191,7 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 
 | Archivo o directorio | Propósito |
 |---|---|
-| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). En `web-ui/engine/` vive el motor de planificación por reglas (`engine.py`, `test_engine.py`, `DESIGN.md`). En `web-ui/msf/` vive el panel de Metasploit (`msf_client.py`, `test_msf.py`, `README.md`): habla con el `msfmcpd` oficial en local, con la casilla de autorización como único control; un payload reverse arranca antes su handler `exploit/multi/handler` por la misma conexión MCP. |
+| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). En `web-ui/engine/` vive el motor de planificación por reglas (`engine.py`, `test_engine.py`, `DESIGN.md`). En `web-ui/msf/` vive el panel de Metasploit (`msf_client.py`, `test_msf.py`, `README.md`): habla con el `msfmcpd` oficial en local, con la casilla de autorización como único control; un payload reverse arranca antes su handler `exploit/multi/handler` por la misma conexión MCP. El target de Config es el objetivo fijado que comparten Start, el motor, Moodle y Metasploit; `POST /api/msf/correlate` empareja findings con módulos Metasploit (por CVE, servicio y puerto) y el goal `msf_targeted` del motor ejecuta el módulo correlacionado. |
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
 | `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |

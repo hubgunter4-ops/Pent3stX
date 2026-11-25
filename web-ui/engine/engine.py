@@ -276,6 +276,97 @@ GOALS = {
             },
         ],
     },
+    "msf_targeted": {
+        "description": (
+            "Objetivo fijado con Metasploit: mapeo de sesiones y "
+            "findings existentes, candidatos de vulnerabilidad, "
+            "correlación findings → módulos Metasploit (solo lectura "
+            "del MCP), check del módulo correlacionado y ejecución "
+            "solo con casilla, y reporte. Exige msfmcpd conectado y "
+            "las acciones peligrosas activadas para ejecutar."),
+        "pipeline_profile": "with_owasp",
+        "scope": "active",
+        "requires": ["pentestx.py", "msfmcpd"],
+        "steps": [
+            {
+                "id": "mapping", "action": "mapping", "tool": "engine",
+                "preconditions": [],
+                "expected_evidence": (
+                    "sesiones y findings del objetivo fijado en el "
+                    "resultado del paso"),
+                "on_fail": "stop",
+                "note": (
+                    "Mapeo: lee las sesiones y findings existentes "
+                    "del objetivo fijado, sin escanear nada nuevo."),
+            },
+            {
+                "id": "vulnerability", "action": "vulnerability",
+                "tool": "pentestx",
+                "preconditions": [
+                    {"type": "previous_step_ok", "step": "mapping"}],
+                "expected_evidence": (
+                    "vulnerability_review.json de la sesión"),
+                "on_fail": "skip",
+                "note": "Candidatos de vulnerabilidad a partir de los findings del mapeo.",
+            },
+            {
+                "id": "correlate", "action": "correlate", "tool": "pentestx",
+                "preconditions": [
+                    {"type": "previous_step_ok_or_skipped",
+                     "step": "vulnerability"}],
+                "expected_evidence": "attack_chains.json de la sesión",
+                "on_fail": "skip",
+                "note": "Correlación local de findings.",
+            },
+            {
+                "id": "msf_correlate", "action": "msf_correlate",
+                "tool": "msf",
+                "preconditions": [
+                    {"type": "previous_step_ok_or_skipped",
+                     "step": "correlate"}],
+                "expected_evidence": (
+                    "tabla finding → módulos candidatos en el "
+                    "resultado del paso"),
+                "on_fail": "skip",
+                "note": (
+                    "Correlación findings → módulos Metasploit "
+                    "(solo lectura del MCP, sin casilla). Sin "
+                    "candidatos queda skipped y el plan sigue."),
+            },
+            {
+                "id": "msf_check", "action": "msf_check", "tool": "msf",
+                "preconditions": [{"type": "msf_candidates"}],
+                "expected_evidence": (
+                    "resultado del check del módulo correlacionado"),
+                "on_fail": "skip",
+                "note": (
+                    "Check del módulo correlacionado de mayor "
+                    "rango. Sin casilla queda blocked."),
+            },
+            {
+                "id": "msf_run", "action": "msf_run", "tool": "msf",
+                "preconditions": [{"type": "msf_checked"}],
+                "expected_evidence": (
+                    "manifiesto en workspace/msf_runs/ + sesiones "
+                    "vinculadas"),
+                "on_fail": "stop",
+                "note": (
+                    "Ejecuta el módulo correlacionado. Solo con "
+                    "casilla y acciones peligrosas activadas; un "
+                    "payload reverse arranca antes su handler por "
+                    "la misma conexión MCP."),
+            },
+            {
+                "id": "report", "action": "report", "tool": "pentestx",
+                "preconditions": [
+                    {"type": "previous_step_ok_or_skipped",
+                     "step": "msf_run"}],
+                "expected_evidence": "reporte de la sesión",
+                "on_fail": "stop",
+                "note": "Genera el reporte de la sesión.",
+            },
+        ],
+    },
 }
 
 
@@ -411,9 +502,34 @@ def build_moodle_command(plan, step, dry_run=True):
     return command
 
 
+def build_msf_command(plan, step):
+    """Comando de muestra de un paso MSF (descripción, no se ejecuta).
+
+    El módulo concreto se elige en tiempo de ejecución (el primer
+    candidato de msf_correlate); el comando de muestra lo dice así
+    en vez de inventar un módulo.
+    """
+    if step["id"] == "msf_correlate":
+        return ["msfmcpd", "msf_search_modules", "--target", plan["target"],
+                "(correlación findings → módulos, solo lectura)"]
+    action = ("msf_module_check" if step["id"] == "msf_check"
+              else "msf_module_execute")
+    return ["msfmcpd", action, "--target", plan["target"],
+            "--module", "<candidato de msf_correlate>"]
+
+
+def build_engine_command(plan, step):
+    """Comando de muestra del paso de mapeo (lectura local)."""
+    return ["engine", "mapping", "--target", plan["target"]]
+
+
 def build_dry_run_command(plan, step):
     if step["tool"] == "moodle_sqli":
         return build_moodle_command(plan, step, dry_run=True)
+    if step["tool"] == "msf":
+        return build_msf_command(plan, step)
+    if step["tool"] == "engine":
+        return build_engine_command(plan, step)
     return build_pentestx_command(plan, step, dry_run=True)
 
 
@@ -462,6 +578,32 @@ def check_preconditions(step, context):
             if not context.get("moodle_session"):
                 return False, (
                     "falta la sesión de Moodle (sesskey y cookie vigentes)")
+        elif kind == "msf_candidates":
+            # Sin resultado de msf_correlate todavía, aún no es
+            # decidible (ver previous_step_ok): se da por cumplida
+            # al planificar; el runner la vuelve a comprobar antes
+            # de ejecutar el check, cuando el resultado ya existe.
+            if "msf_correlate" not in results:
+                continue
+            corr = results.get("msf_correlate") or {}
+            correlations = (corr.get("result") or {}).get("correlations")
+            if correlations is None:
+                correlations = corr.get("correlations") or []
+            total = sum(len(c.get("modules") or [])
+                        for c in correlations if isinstance(c, dict))
+            if total == 0:
+                return False, (
+                    "msf_correlate no devolvió módulos candidatos")
+        elif kind == "msf_checked":
+            # Sin resultado de check todavía, aún no es decidible
+            # (ver previous_step_ok): se da por cumplida al
+            # planificar; el runner la vuelve a comprobar antes
+            # de ejecutar el run.
+            if "msf_check" not in results:
+                continue
+            prev = results.get("msf_check") or {}
+            if prev.get("status") != "completed":
+                return False, "el paso msf_check no terminó OK"
         elif kind == "moodle_vulnerable":
             # Sin resultado de detección todavía, aún no es decidible
             # (ver previous_step_ok): se da por cumplida al
@@ -539,6 +681,12 @@ def generate_plan(goal, target, scope, confirm_written_authorization=False,
         "warnings": [],
         "steps": [],
     }
+    if goal == "msf_targeted":
+        # Los findings del mapeo viajan con el plan: el paso
+        # msf_correlate los usa (y el paso mapping los vuelve a
+        # leer en ejecución). No son secretos: son findings de
+        # sesiones propias ya guardadas en disco.
+        plan["msf_findings"] = list((mapping.get("findings") or [])[:50])
     # Contexto para evaluar el gating al generar el plan (sin
     # resultados todavía: previous_step_ok se evalúa en ejecución).
     context = {
@@ -560,8 +708,17 @@ def generate_plan(goal, target, scope, confirm_written_authorization=False,
             # pasos Moodle quedan bloqueados (DESIGN.md §4.3).
             gate_ok, gate_reason = False, (
                 "falta la sesión de Moodle (sesskey y cookie vigentes)")
+        if (step["tool"] == "msf"
+                and step["action"] in ("msf_check", "msf_run")
+                and not confirmed):
+            # Check y run son ejecución: sin la casilla marcada no
+            # se ejecutan (DESIGN.md §4.4). La correlación es solo
+            # lectura y no se bloquea.
+            gate_ok, gate_reason = False, (
+                "sin autorización confirmada: marca la casilla para "
+                "ejecutar módulos Metasploit")
         if not gate_ok:
-            if step["tool"] == "moodle_sqli":
+            if step["tool"] in ("moodle_sqli", "msf"):
                 step["status"] = "blocked"
                 step["blocked_reason"] = gate_reason
                 plan["warnings"].append(

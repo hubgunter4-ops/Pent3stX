@@ -10,6 +10,42 @@ conecta al tuyo en local. La autorización es la casilla
 marcarla no se ejecuta nada, y no hay ningún campo de texto para
 escribir una referencia.
 
+## Objetivo fijado (compartido con el resto de Pent3stX)
+
+El MCP no es un panel aislado: el target de Config es el objetivo
+único. El diálogo MSF lo pre-rellena como `RHOSTS` (el campo
+"Target fijado") y el motor se lo pasa a los pasos MSF del goal
+`msf_targeted`; Moodle usa su propio fijo
+(`http://127.0.0.1:8080/moodle`). Junto al target de Config, la
+interfaz indica que ese objetivo es el que usan Start, el motor,
+Moodle y Metasploit. El servidor sigue validando el target con la
+allowlist exacta (`contaia.site` / `127.0.0.1`); cualquier otro se
+rechaza.
+
+## Correlación findings → módulos
+
+El diálogo MSF trae **Correlación findings → módulos**: toma los
+findings de una sesión (selector) o los que pegues en JSON y llama
+a `POST /api/msf/correlate` con el target fijado. Por cada finding
+devuelve los módulos candidatos ordenados, con rango y motivo:
+
+1. **CVE exacto** (rango 1): el CVE aparece en el nombre o la
+   descripción del módulo.
+2. **Servicio** (rango 2): el nombre del servicio (http, smb, ssh…)
+   aparece en el módulo.
+3. **Puerto conocido** (rango 3): el servicio derivado del puerto
+   (445 → smb, 22 → ssh, 3306 → mysql…).
+
+Solo lectura del MCP (`msf_search_modules`), sin casilla y sin
+acciones peligrosas. Sin conexión con `msfmcpd`, la correlación
+devuelve lista vacía con el mensaje "Metasploit no conectado";
+sin findings, vacío. Nunca se inventa un módulo: un candidato
+solo cuenta si el token está de verdad en el texto del módulo.
+Cada consulta se hace una sola vez aunque varios findings la
+compartan. En Plan Overview, la misma tabla aparece tras ejecutar
+el goal `msf_targeted` del motor, y el botón **"Usar"** de cada
+módulo lo carga en el diálogo MSF con el target ya fijado.
+
 ## Qué hace
 
 - **Lectura sin casilla**: buscar módulos (`msf_search_modules`),
@@ -149,6 +185,14 @@ Consecuencias que hay que conocer:
   (módulo, opciones redactadas, si es reverse, el handler que
   necesita y las notas de defaults) más la info del módulo si
   `msfmcpd` está conectado. No ejecuta nada.
+- `POST /api/msf/correlate` — `{target, findings, mcp_token?}`.
+  Correlación findings → módulos (solo lectura, sin casilla):
+  por CVE exacto (rango 1), por servicio (rango 2) y por puerto
+  conocido (rango 3). Devuelve `{connected, target,
+  correlations: [{finding, modules: [{name, type, rank,
+  reason}]}]}`. Sin conexión, `connected: false` y lista vacía
+  con el error; sin findings, lista vacía; target fuera de la
+  allowlist → 409.
 - `POST /api/msf/check` y `POST /api/msf/run` — `{confirm: true,
   confirm_written_authorization, mcp_token?}`. Exigen plan
   aprobado de esa misma acción y la casilla marcada; sin casilla,
@@ -172,15 +216,21 @@ opciones no aparecen nunca.
 
 - `web-ui/msf/msf_client.py` — cliente MCP (JSON-RPC 2.0 por
   HTTP, solo stdlib) + validación de módulos, opciones, targets,
-  LHOST y planes reverse con su handler.
+  LHOST y planes reverse con su handler. También la correlación
+  findings → módulos (`correlate_modules`, `validate_findings`,
+  `default_options_from_info`).
 - `web-ui/msf/README.md` — este archivo.
-- `web-ui/test_msf.py` — 32 tests contra un mock propio de
-  `msfmcpd` (32 en verde): validación, handler antes del exploit,
+- `web-ui/test_msf.py` — 47 tests contra un mock propio de
+  `msfmcpd` (47 en verde): validación, handler antes del exploit,
   sesión vinculada, reutilización del handler, 409 sin casilla,
   409 con target fuera de alcance, 409 con acciones peligrosas
-  desactivadas, token nunca en el manifiesto.
-- `web-ui/server.py` — endpoints `/api/msf/*` y evidencia en
-  `workspace/msf_runs/`.
+  desactivadas, token nunca en el manifiesto, correlación por
+  CVE/servicio/puerto, sin MCP → vacío, target fuera de
+  allowlist en correlate → 409.
+- `web-ui/server.py` — endpoints `/api/msf/*` (incluido
+  `/api/msf/correlate`) y evidencia en `workspace/msf_runs/`; el
+  motor (`web-ui/engine/`) usa la correlación en el goal
+  `msf_targeted` (ver `web-ui/engine/DESIGN.md` §4.4).
 
 ## Qué NO hace
 
