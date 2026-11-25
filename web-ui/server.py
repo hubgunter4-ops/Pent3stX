@@ -18,6 +18,13 @@ the real ``pentestx.py`` CLI under the same guardrails as the CLI itself:
   fixed argument list — no arbitrary commands, no ``--install-tools``,
   no custom profiles, no file uploads to the server.
 
+It also exposes the standalone Moodle SQLi tool in ``web-ui/tools/``
+(``/api/tools/moodle-sqli/dry-run`` and
+``/api/tools/moodle-sqli/run``), under the same dry-run-first rule:
+the tool only ever talks to http://127.0.0.1:8080/moodle, never
+extracts the password hash, and the session cookie / sesskey are
+never written to disk or returned in API responses.
+
 Run from the repository root::
 
     python3 web-ui/server.py
@@ -30,6 +37,7 @@ only validates the request and hands the fixed command to pentestx.py.
 """
 
 import hashlib
+import importlib.util
 import ipaddress
 import json
 import os
@@ -46,6 +54,8 @@ PORT = 8765
 
 REPO_ROOT = Path(os.environ.get("PENTESTX_ROOT", Path(__file__).resolve().parent.parent))
 WEB_UI_DIR = Path(__file__).resolve().parent
+TOOLS_DIR = WEB_UI_DIR / "tools"
+MOODLE_SQLI = TOOLS_DIR / "moodle_sqli.py"
 PENTESTX = REPO_ROOT / "pentestx.py"
 WORKSPACE_DIR = REPO_ROOT / "workspace"
 SESSIONS_DIR = WORKSPACE_DIR / "pentestx_sessions"
@@ -207,6 +217,68 @@ def command_hash(command):
     return hashlib.sha256(json.dumps(command).encode("utf-8")).hexdigest()
 
 
+# -- Moodle SQLi tool (web-ui/tools/moodle_sqli.py) -------------------
+# Validation lives in the tool itself; the server loads it (by path,
+# never from an installed package) so there is a single definition
+# of what is allowed. The sesskey / cookie only ever live in server
+# memory for the approved dry-run; they are never logged, never
+# written to disk by this server, and never returned in a response.
+
+def _load_moodle_tool():
+    if not MOODLE_SQLI.is_file():
+        raise ValidationError("moodle_sqli.py no encontrado en web-ui/tools/")
+    spec = importlib.util.spec_from_file_location(
+        "moodle_sqli_tool", MOODLE_SQLI)
+    if spec is None or spec.loader is None:
+        raise ValidationError("no se pudo cargar moodle_sqli.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def validate_moodle_request(payload):
+    """Validate a moodle-sqli request; returns a clean dict (in memory)."""
+    if not isinstance(payload, dict):
+        raise ValidationError("el cuerpo debe ser un objeto JSON")
+    tool = _load_moodle_tool()
+    try:
+        base_url = tool.validate_base_url(payload.get("base_url"))
+        sesskey = tool.validate_token(payload.get("sesskey"), "sesskey")
+        session_cookie = tool.validate_token(
+            payload.get("session_cookie"), "session-cookie")
+        extract = tool.validate_extract(payload.get("extract"))
+        sleep = tool.validate_number(payload.get("sleep", 3), "sleep", 1, 10)
+        timeout = tool.validate_number(
+            payload.get("timeout", 15), "timeout", 5, 60)
+        max_chars = tool.validate_number(
+            payload.get("max_chars", 50), "max-chars", 1, 50)
+    except tool.ValidationError as exc:
+        raise ValidationError(str(exc))
+    auth_ref = validate_auth_reference(payload.get("authorization_reference"))
+    return {
+        "base_url": base_url,
+        "sesskey": sesskey,
+        "session_cookie": session_cookie,
+        "extract": extract,
+        "sleep": sleep,
+        "timeout": timeout,
+        "max_chars": max_chars,
+        "authorization_reference": auth_ref,
+    }
+
+
+def build_moodle_command(request, dry_run):
+    tool = _load_moodle_tool()
+    return tool.build_command(request, dry_run)
+
+
+def _parse_tool_json(text):
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
+
+
 def validate_session_name(name):
     """Return a safe session directory name, or raise ValidationError."""
     if not isinstance(name, str) or not _SESSION_NAME.fullmatch(name) or name in (".", ".."):
@@ -264,6 +336,7 @@ class State:
     def __init__(self):
         self.lock = threading.Lock()
         self.dry_run = None  # {"hash": str, "plan": dict, "command": list}
+        self.moodle_dry_run = None  # {"hash": str, "request": dict, "command": list}
         self.process = None
 
     def set_dry_run(self, plan, command):
@@ -273,6 +346,18 @@ class State:
     def get_dry_run(self):
         with self.lock:
             return self.dry_run
+
+    def set_moodle_dry_run(self, request, command):
+        with self.lock:
+            self.moodle_dry_run = {
+                "hash": command_hash(command),
+                "request": request,
+                "command": command,
+            }
+
+    def get_moodle_dry_run(self):
+        with self.lock:
+            return self.moodle_dry_run
 
     def set_process(self, proc):
         with self.lock:
@@ -301,9 +386,11 @@ class State:
 STATE = State()
 
 
-def run_cli(command, timeout):
-    """Run pentestx.py without a shell; returns stdout/stderr/exit_code."""
-    before = {s["name"] for s in list_sessions()}
+def _run_process(command, timeout):
+    """Run a fixed command without a shell; returns stdout/stderr/exit_code.
+
+    The running process is tracked in STATE so /api/stop can kill it.
+    """
     proc = subprocess.Popen(
         command,
         cwd=str(REPO_ROOT),
@@ -323,6 +410,13 @@ def run_cli(command, timeout):
         exit_code = 124
     finally:
         STATE.clear_process()
+    return {"stdout": stdout or "", "stderr": stderr or "", "exit_code": exit_code}
+
+
+def run_cli(command, timeout):
+    """Run pentestx.py without a shell; returns stdout/stderr/exit_code."""
+    before = {s["name"] for s in list_sessions()}
+    result = _run_process(command, timeout)
     after = list_sessions()
     new_sessions = [s for s in after if s["name"] not in before]
     session_dir = new_sessions[0]["name"] if new_sessions else (after[0]["name"] if after else None)
@@ -330,9 +424,9 @@ def run_cli(command, timeout):
     if session_dir:
         manifest = read_manifest(SESSIONS_DIR / session_dir)
     return {
-        "stdout": stdout or "",
-        "stderr": stderr or "",
-        "exit_code": exit_code,
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
         "session_dir": session_dir,
         "manifest": manifest,
     }
@@ -451,6 +545,56 @@ class Handler(BaseHTTPRequestHandler):
                     "exit_code": result["exit_code"],
                     "session_dir": result["session_dir"],
                     "manifest": result["manifest"],
+                })
+            elif path == "/api/tools/moodle-sqli/dry-run":
+                # Validates and shows the exact payloads; sends nothing.
+                # The response never contains the sesskey or the cookie.
+                payload = self._read_json()
+                request = validate_moodle_request(payload)
+                command = build_moodle_command(request, dry_run=True)
+                result = _run_process(command, 60)
+                if result["exit_code"] == 0:
+                    STATE.set_moodle_dry_run(request, command)
+                data = _parse_tool_json(result["stdout"])
+                self._send_json(200, {
+                    "dry_run": True,
+                    "exit_code": result["exit_code"],
+                    "stderr": result["stderr"],
+                    "payloads": (data or {}).get("payloads"),
+                    "base_url": request["base_url"],
+                    "extract": request["extract"],
+                })
+            elif path == "/api/tools/moodle-sqli/run":
+                payload = self._read_json()
+                if payload.get("confirm") is not True:
+                    self._send_json(400, {"error": "falta confirm: true"})
+                    return
+                auth_ref = validate_auth_reference(
+                    payload.get("authorization_reference"))
+                approved = STATE.get_moodle_dry_run()
+                if approved is None:
+                    self._send_json(409, {
+                        "error": "sin dry-run previo: ejecuta "
+                                 "/api/tools/moodle-sqli/dry-run primero"})
+                    return
+                if approved["request"]["authorization_reference"] != auth_ref:
+                    self._send_json(409, {
+                        "error": "la referencia de autorización no coincide "
+                                 "con la del dry-run"})
+                    return
+                command = build_moodle_command(approved["request"], dry_run=False)
+                if command_hash(command) != command_hash(
+                        build_moodle_command(
+                            approved["request"], dry_run=True)[:-1]):
+                    self._send_json(409, {
+                        "error": "el comando cambió tras el dry-run"})
+                    return
+                result = _run_process(command, EXECUTE_TIMEOUT)
+                data = _parse_tool_json(result["stdout"])
+                self._send_json(200, {
+                    "exit_code": result["exit_code"],
+                    "stderr": result["stderr"],
+                    "result": data,
                 })
             elif path == "/api/stop":
                 stopped = STATE.stop_process()

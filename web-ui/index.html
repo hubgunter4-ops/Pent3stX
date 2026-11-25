@@ -46,6 +46,7 @@
       <div class="menu-drop" role="menu">
         <button type="button" data-action="scan">Scan (selected phase)</button>
         <button type="button" data-action="analyze-ports">Analyze ports</button>
+        <button type="button" data-action="moodle-sqli">Moodle SQLi (local)</button>
       </div>
     </div>
     <div class="menu" data-menu="assessments"><button type="button" class="menu-btn">Assessments</button>
@@ -213,6 +214,45 @@
     <span>Backend local: 127.0.0.1:8765 | v2.0-functional</span>
   </footer>
 </div>
+
+<!-- Moodle SQLi dialog -->
+<dialog id="moodleDialog" class="dialog">
+  <form method="dialog" id="moodleForm">
+    <h2>Moodle SQLi (local) — CVE-2021-36393</h2>
+    <p class="muted">Sonda de inyección SQL ciega por tiempo contra el Moodle propio del laboratorio. Solo http://127.0.0.1:8080/moodle. La sesskey y la cookie caducan: sácalas de nuevo del navegador con la sesión iniciada. No se extrae el hash de password.</p>
+    <label>Base URL (solo http://127.0.0.1:8080/moodle)
+      <input type="text" id="moodleBaseUrl" value="http://127.0.0.1:8080/moodle">
+    </label>
+    <label>Sesskey vigente
+      <input type="text" id="moodleSesskey" autocomplete="off" placeholder="sesskey de la sesión de Moodle">
+    </label>
+    <label>Cookie MoodleSession vigente
+      <input type="password" id="moodleCookie" autocomplete="off" placeholder="valor de la cookie MoodleSession">
+    </label>
+    <label>Qué extraer
+      <span><input type="checkbox" id="moodleExtractDb" checked> database()</span>
+      <span><input type="checkbox" id="moodleExtractUser" checked> username (primer usuario)</span>
+    </label>
+    <label>Referencia de autorización escrita (obligatoria)
+      <input type="text" id="moodleAuth" placeholder="docs/AUTORIZACION-moodle-local.md">
+    </label>
+    <p class="muted">Primero se hace dry-run y se muestran los payloads exactos en la consola; nada se envía hasta que confirmes. La cookie y el sesskey no se guardan en el navegador ni en disco.</p>
+    <button type="submit" class="dialog-btn" value="dry-run">Ver dry-run</button>
+    <button type="submit" class="dialog-btn" value="cancel" formnovalidate>Cancelar</button>
+  </form>
+</dialog>
+
+<!-- Moodle SQLi confirm dialog -->
+<dialog id="moodleConfirmDialog" class="dialog">
+  <form method="dialog">
+    <h2>Confirmar Moodle SQLi</h2>
+    <p>Estos son los payloads exactos del dry-run. Solo se ejecutará esta sonda, sin cambios:</p>
+    <pre id="moodleConfirmPayloads" class="confirm-command"></pre>
+    <p class="muted">La extracción es lenta (unos segundos por carácter acertado). Para detenerla, pulsa Pause.</p>
+    <button type="submit" class="dialog-btn" value="confirm">Ejecutar</button>
+    <button type="submit" class="dialog-btn" value="cancel">Cancelar</button>
+  </form>
+</dialog>
 
 <!-- Confirm execution dialog -->
 <dialog id="confirmDialog" class="dialog">

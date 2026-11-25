@@ -91,6 +91,26 @@ Start queda deshabilitado. No hay modo simulación.
   `workspace/pentestx_sessions/`.
 - `GET /api/findings?session=<nombre>` — findings de esa sesión,
   máximo 200, tal cual vienen de `findings_db.json`.
+- `POST /api/tools/moodle-sqli/dry-run` — valida y devuelve los
+  payloads exactos de la sonda Moodle SQLi sin enviar nada
+  (requiere referencia de autorización).
+- `POST /api/tools/moodle-sqli/run` — `{confirm: true,
+  authorization_reference}`. Solo con dry-run previo del comando
+  exacto y la misma referencia; si no, 409 sin ejecutar.
+
+## Herramienta aparte: Moodle SQLi (local)
+
+Menú **Tools → Moodle SQLi (local)**: sonda de inyección SQL ciega
+por tiempo (CVE-2021-36393) contra el Moodle propio del laboratorio,
+en `web-ui/tools/moodle_sqli.py` y documentada en
+`web-ui/tools/README.md`. Solo habla con
+`http://127.0.0.1:8080/moodle`, con la sesskey y la cookie
+MoodleSession vigentes que pegues en el diálogo (caducan y no se
+guardan). Flujo igual que el resto: dry-run con los payloads
+exactos → confirmación → ejecución, con la salida real en la
+consola verde. Extrae solo `database()` y `username`; **el hash de
+password quedó fuera a propósito**. No toca `pentestx.py`: es un
+script aparte con sus propios guardrails.
 
 ## Qué se ve en cada zona
 
@@ -137,6 +157,9 @@ Start queda deshabilitado. No hay modo simulación.
 - `web-ui/server.py` — backend local (solo stdlib, 127.0.0.1:8765).
 - `web-ui/test_server.py` — tests unitarios de la validación del
   servidor (sin llamar a `pentestx.py`).
+- `web-ui/tools/moodle_sqli.py` — sonda Moodle SQLi local aparte
+  (CVE-2021-36393; solo database y username, sin password), con
+  `web-ui/tools/test_moodle_sqli.py` y `web-ui/tools/README.md`.
 - `web-ui/README.md` — esta guía.
 - `web-ui/docs/ejecucion.gif` — animación antigua de la versión demo
   (solo maqueta de layout, no es una ejecución real; ya no se
@@ -146,8 +169,10 @@ Start queda deshabilitado. No hay modo simulación.
 
 ```bash
 python3 -m py_compile web-ui/server.py
+python3 -m py_compile web-ui/tools/moodle_sqli.py
 node --check web-ui/app.js
 python3 -m unittest discover -s web-ui -p "test_server.py" -v
+python3 -m unittest discover -s web-ui/tools -p "test_moodle_sqli.py" -v
 ```
 
 La ejecución real solo se puede probar en la máquina de laboratorio

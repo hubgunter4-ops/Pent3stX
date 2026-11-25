@@ -24,6 +24,8 @@ La interfaz actual es la web funcional en `web-ui/` (Design Option 1, estilo Ett
 
 La página no simula nada: con el backend local corriendo, Start hace primero un dry-run real con la CLI, muestra el comando exacto y solo ejecuta tras confirmación explícita; la consola muestra la salida real y el Inspector los findings reales de la sesión. Sin backend, Start queda deshabilitado. Las instrucciones completas están en [`web-ui/README.md`](web-ui/README.md). Nota: el GIF de ejecución (`web-ui/docs/ejecucion.gif`) es la animación antigua de la versión demo y ya no se incrusta en la guía; además todavía no está subido al repositorio.
 
+Aparte, en `web-ui/tools/` vive la sonda Moodle SQLi local (CVE-2021-36393) como script separado: solo habla con el Moodle propio en `http://127.0.0.1:8080/moodle`, con dry-run y confirmación propios, y extrae únicamente `database()` y `username` (el hash de password quedó fuera a propósito). No toca `pentestx.py`; ver [`web-ui/tools/README.md`](web-ui/tools/README.md).
+
 ## Inicio rápido
 
 ### Dependencias
@@ -122,7 +124,7 @@ La nueva interfaz web no incluye panel de telemetría. El módulo `telemetry_sen
 
 ## Seguridad y límites
 
-PentestX no expone desde su capa CLI ni desde la interfaz web funciones de fuerza bruta, explotación personalizada, post-explotación, persistencia en el target, pivoting o exfiltración. La fase `vulnerability` procesa findings existentes y produce candidatos para revisión manual; no autoriza explotación.
+PentestX no expone desde su capa CLI ni desde la interfaz web funciones de fuerza bruta, explotación personalizada, post-explotación, persistencia en el target, pivoting o exfiltración. La fase `vulnerability` procesa findings existentes y produce candidatos para revisión manual; no autoriza explotación. Aparte de la CLI, `web-ui/tools/moodle_sqli.py` es una herramienta separada para el Moodle local del laboratorio (CVE-2021-36393), con sus propios guardrails (solo 127.0.0.1:8080/moodle, dry-run, autorización escrita y sin extracción del hash de password); no forma parte de los pipelines de `pentestx.py`.
 
 La interfaz web ya no es de solo lectura ni simulación: ejecuta la CLI real a través del backend local, pero solo con dry-run previo del comando exacto, autorización escrita y los guardrails de la CLI (allowlist, pipelines controlados, sin shell). La ejecución real sigue viviendo en `pentestx.py` y solo corre en la máquina local donde se arranca el servidor.
 
@@ -161,8 +163,10 @@ Ejecuta las comprobaciones básicas:
 ```bash
 python3 -m py_compile telemetry_sender.py pentestx.py pentestx_controlled.py
 python3 -m py_compile web-ui/server.py
+python3 -m py_compile web-ui/tools/moodle_sqli.py
 node --check web-ui/app.js
 python3 -m unittest discover -s web-ui -p "test_server.py" -v
+python3 -m unittest discover -s web-ui/tools -p "test_moodle_sqli.py" -v
 python3 -m unittest discover -s tests -v
 python3 pentestx.py --check-tools
 # Dry-run contra contaia.site (requiere scope.yaml y referencia de autorización;
@@ -183,7 +187,7 @@ La validación histórica y la matriz de pruebas están en [`VALIDATION.md`](VAL
 
 | Archivo o directorio | Propósito |
 |---|---|
-| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. |
+| `web-ui/` | Interfaz web funcional (Design Option 1, estilo Ettercap clásico): `index.html`, `styles.css`, `app.js`, `server.py` (backend local), `test_server.py` y `README.md` con las instrucciones de uso. En `web-ui/tools/` vive aparte la sonda Moodle SQLi local (`moodle_sqli.py`, `test_moodle_sqli.py`, `README.md`). |
 | `telemetry_sender.py` | Emisor asíncrono HTTP/UDP integrado desde el repo de telemetría. |
 | `pentestx.py` | Capa CLI, validaciones, límites, pipelines y manifiestos. |
 | `pentestx_controlled.py` | Alcance (`Scope`/`scope.yaml`), sesiones, pasos controlados y redacción de evidencia. |

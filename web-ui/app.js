@@ -28,6 +28,7 @@
     phase: "owasp_web",
     plan: null,
     sessionDir: null,
+    moodleRequest: null,
     config: {
       target: "contaia.site",
       scope: "passive",
@@ -97,6 +98,10 @@
       green.textContent = "Backend no conectado — arranca python3 web-ui/server.py";
     }
     setStartEnabled(state.connected && state.pentestxPresent && !state.running);
+    document.querySelectorAll('[data-action="moodle-sqli"]').forEach(function (b) {
+      b.disabled = !(state.connected && !state.running);
+      b.classList.toggle("disabled", b.disabled);
+    });
   }
 
   function checkBackend() {
@@ -302,6 +307,77 @@
     });
   }
 
+  /* -- Moodle SQLi (local, web-ui/tools/moodle_sqli.py) ------------- */
+  /* The sesskey and cookie live only in state.moodleRequest (memory);
+     they are never saved to localStorage and never logged. */
+
+  function fillMoodleForm() {
+    document.getElementById("moodleBaseUrl").value = "http://127.0.0.1:8080/moodle";
+    document.getElementById("moodleSesskey").value = "";
+    document.getElementById("moodleCookie").value = "";
+    document.getElementById("moodleExtractDb").checked = true;
+    document.getElementById("moodleExtractUser").checked = true;
+    document.getElementById("moodleAuth").value = state.config.authorization_reference || "";
+  }
+
+  function moodleDryRun() {
+    var req = state.moodleRequest;
+    if (!req) return;
+    log("[*] Moodle SQLi dry-run: " + req.extract.join(", ") + " en " +
+        req.base_url + " (sin enviar nada)…");
+    api("/api/tools/moodle-sqli/dry-run", {
+      method: "POST", body: req
+    }, 60000).then(function (data) {
+      if (data.exit_code !== 0) {
+        log("[!!] Dry-run Moodle rechazado (exit " + data.exit_code + "). No se ejecuta nada.");
+        logLines(data.stderr);
+        return;
+      }
+      log("[+] Dry-run Moodle OK. Payloads exactos (sesskey y cookie redactados):");
+      (data.payloads || []).forEach(function (p) {
+        log("    " + p.description);
+        log("    " + p.method + " " + p.url);
+        log("    body: " + JSON.stringify(p.body));
+      });
+      document.getElementById("moodleConfirmPayloads").textContent =
+        JSON.stringify(data.payloads || [], null, 2).slice(0, 4000);
+      document.getElementById("moodleConfirmDialog").showModal();
+    }).catch(function (err) {
+      log("[!!] Dry-run Moodle rechazado: " + err.message + ". No se ejecuta nada.");
+    });
+  }
+
+  function runMoodle() {
+    var req = state.moodleRequest;
+    if (!req || state.running) return;
+    state.running = true;
+    renderBackend();
+    log("[+] Ejecutando la sonda Moodle SQLi… (lenta: segundos por carácter acertado; Pause para detener)");
+    api("/api/tools/moodle-sqli/run", {
+      method: "POST",
+      body: { confirm: true, authorization_reference: req.authorization_reference }
+    }, 620000).then(function (res) {
+      state.running = false;
+      renderBackend();
+      logLines(res.stderr);
+      var result = res.result || {};
+      if (result.error) log("[!!] Moodle SQLi: " + result.error);
+      log("[+] Moodle SQLi terminado: exit " + res.exit_code +
+          " | vulnerable: " + (result.vulnerable ? "sí" : "no") +
+          " | peticiones: " + (result.requests_sent || 0));
+      if (result.results) {
+        Object.keys(result.results).forEach(function (k) {
+          log("    " + k + ": " + result.results[k]);
+        });
+      }
+      if (result.evidence_dir) log("[+] Evidencia: " + result.evidence_dir);
+    }).catch(function (err) {
+      state.running = false;
+      renderBackend();
+      log("[!!] Moodle SQLi fallido o detenido: " + err.message);
+    });
+  }
+
   function resetSession() {
     state.plan = null;
     state.sessionDir = null;
@@ -487,6 +563,14 @@
       loadFindings(state.sessionDir);
       log("[*] Puertos: revisa los findings reales de la sesión " + state.sessionDir + " (sin escaneo nuevo).");
     },
+    "moodle-sqli": function () {
+      if (!state.connected) {
+        log("[!!] Sin backend: arranca python3 web-ui/server.py y recarga. La sonda Moodle no se simula.");
+        return;
+      }
+      fillMoodleForm();
+      document.getElementById("moodleDialog").showModal();
+    },
     "plugins-none": function () { log("[*] Plugins: ninguno cargado."); },
     "show-plan": function () { showTab("plan"); },
     "show-findings": function () { showInspector("findings"); },
@@ -569,6 +653,29 @@
       doExecute();
     } else {
       log("[*] Ejecución cancelada por el usuario. El dry-run sigue aprobado para ese comando exacto.");
+    }
+  });
+
+  document.getElementById("moodleForm").addEventListener("submit", function (ev) {
+    if (ev.submitter && ev.submitter.value === "cancel") return;
+    var extract = [];
+    if (document.getElementById("moodleExtractDb").checked) extract.push("database");
+    if (document.getElementById("moodleExtractUser").checked) extract.push("username");
+    state.moodleRequest = {
+      base_url: document.getElementById("moodleBaseUrl").value.trim(),
+      sesskey: document.getElementById("moodleSesskey").value.trim(),
+      session_cookie: document.getElementById("moodleCookie").value.trim(),
+      extract: extract,
+      authorization_reference: document.getElementById("moodleAuth").value.trim()
+    };
+    moodleDryRun();
+  });
+
+  document.getElementById("moodleConfirmDialog").addEventListener("close", function () {
+    if (document.getElementById("moodleConfirmDialog").returnValue === "confirm") {
+      runMoodle();
+    } else {
+      log("[*] Sonda Moodle cancelada por el usuario. El dry-run sigue aprobado para ese comando exacto.");
     }
   });
 
