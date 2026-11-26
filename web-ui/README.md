@@ -35,8 +35,14 @@ Start queda deshabilitado. No hay modo simulación.
 
 ## Flujo: dry-run → confirmación → ejecución
 
-1. **Configura** en Config (o con los valores por defecto): target
-   `contaia.site`, scope `passive` y pipeline `with_owasp`. La
+1. **Configura** en la barra visible **RUN CONFIGURATION** o en
+   Config: target `contaia.site`, scope `passive` y pipeline
+   `with_owasp`. El target es un campo de texto libre, sin sugerencias;
+   pulsa **Apply** para aplicar y guardar los valores de target, scope y
+   pipeline en este navegador. Ambos puntos de configuración se
+   mantienen sincronizados. Aunque el campo admita texto libre, el
+   backend solo permite `contaia.site` y `127.0.0.1`; los demás targets
+   se rechazan sin resolverlos ni contactar con ellos. La
    autorización ya no es texto en ningún lado de la interfaz: es una
    casilla por ejecución ("Confirmo que tengo autorización escrita
    para este alcance") en el diálogo de confirmación. Sin marcarla,
@@ -229,9 +235,8 @@ de sesiones. Evidencia en `workspace/msf_runs/<timestamp>/`.
   Authorized Security Assessment`.
 - **Menú:** File, Edit, View, Tools, Assessments, Plugins, Window y
   Help.
-- **Barra de herramientas:** New, Open, Start, Pause, Scan, Import,
-  Export, Save y Config, con el distintivo `Authorized • Assessment
-  Only` a la derecha.
+- **Barra de herramientas:** New, Open, Start, Pause, Scan, Import, Export, Save y Config, con el distintivo `Authorized • Assessment Only` a la derecha.
+- **RUN CONFIGURATION:** campo editable de target sin sugerencias y selectores visibles de scope y pipeline. **Apply** aplica y guarda la configuración en el navegador; los mismos valores aparecen en Config. El backend conserva la allowlist y valida la solicitud antes del dry-run.
 - **OPERATIONS • PHASES (izquierda):** árbol de fases — `passive`
   (discovery, passive-recon), `active` (host-probe), `web` (crawl),
   `ports` (portscan), `vuln` (vuln-scan), `owasp_web` (owasp-zap,

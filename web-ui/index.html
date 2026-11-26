@@ -90,6 +90,42 @@
     <span class="authorized-badge">Authorized • Assessment Only</span>
   </div>
 
+  <!-- Quick run configuration: editable target, scope and pipeline -->
+  <section class="quick-config" aria-label="Run configuration">
+    <div class="quick-heading">
+      <span class="quick-mark" aria-hidden="true">PX</span>
+      <div><strong>RUN CONFIGURATION</strong><small>Target and execution options</small></div>
+    </div>
+    <label class="quick-field target-field" for="quickTarget">
+      <span>AUTHORIZED TARGET</span>
+      <input id="quickTarget" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Enter target or host" aria-describedby="quickTargetHelp">
+      <small id="quickTargetHelp">Free text; the backend rejects targets outside the permitted scope.</small>
+    </label>
+    <label class="quick-field" for="quickScope">
+      <span>SCOPE</span>
+      <select id="quickScope">
+        <option value="passive">passive</option>
+        <option value="active">active</option>
+      </select>
+      <small>Active actions require active scope.</small>
+    </label>
+    <label class="quick-field pipeline-field" for="quickPipeline">
+      <span>PIPELINE</span>
+      <select id="quickPipeline">
+        <option value="standard">standard</option>
+        <option value="with_intrusive">with_intrusive</option>
+        <option value="with_owasp">with_owasp</option>
+        <option value="full_web">full_web</option>
+      </select>
+      <small>Controlled pipeline</small>
+    </label>
+    <div class="quick-actions">
+      <span class="scope-status"><i aria-hidden="true"></i> BACKEND VALIDATION</span>
+      <button type="button" class="quick-apply" data-action="apply-run-config">Apply</button>
+    </div>
+  </section>
+
   <!-- Main area -->
   <main class="main">
     <!-- Left: operations tree -->

@@ -1049,6 +1049,21 @@
     }
   }
 
+  function syncQuickConfigFromState() {
+    document.getElementById("quickTarget").value = state.config.target;
+    document.getElementById("quickScope").value = state.config.scope;
+    document.getElementById("quickPipeline").value = state.config.pipeline_profile;
+  }
+
+  function applyQuickConfig() {
+    state.config.target = document.getElementById("quickTarget").value.trim();
+    state.config.scope = document.getElementById("quickScope").value;
+    state.config.pipeline_profile = document.getElementById("quickPipeline").value;
+    saveConfig();
+    log("[*] Configuración aplicada: " + state.config.target + ", " +
+        state.config.scope + ", " + state.config.pipeline_profile + ".");
+  }
+
   function loadSavedConfig() {
     try {
       var raw = localStorage.getItem("pent3stx-config");
@@ -1067,6 +1082,7 @@
     document.getElementById("cfgTarget").value = state.config.target;
     document.getElementById("cfgScope").value = state.config.scope;
     document.getElementById("cfgPipeline").value = state.config.pipeline_profile;
+    syncQuickConfigFromState();
   }
 
   function selectPhase(phase) {
@@ -1131,6 +1147,7 @@
     "pause": pauseScan,
     "export": exportReport,
     "save": saveConfig,
+    "apply-run-config": applyQuickConfig,
     "config": function () { fillConfigForm(); document.getElementById("configDialog").showModal(); },
     "about": function () { document.getElementById("aboutDialog").showModal(); },
     "authorized-note": function () {
@@ -1259,6 +1276,7 @@
     state.config.target = document.getElementById("cfgTarget").value.trim();
     state.config.scope = document.getElementById("cfgScope").value;
     state.config.pipeline_profile = document.getElementById("cfgPipeline").value;
+    syncQuickConfigFromState();
     saveConfig();
     log("[*] Configuración actualizada: " + state.config.target + ", " +
         state.config.scope + ", " + state.config.pipeline_profile + ".");
