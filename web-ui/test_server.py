@@ -1,7 +1,7 @@
-"""Unit tests for web-ui/server.py validation only.
+"""Unit tests for web-ui/server.py validation and API-only routes.
 
-These tests never call pentestx.py, nmap, ZAP or any scanner. They only
-exercise the server's own validation and command-building functions.
+These tests never call pentestx.py, nmap, ZAP or any scanner. They exercise
+validation, command-building functions, and local HTTP route behavior.
 
 Run:  python3 -m unittest discover -s web-ui -p "test_server.py" -v
 (from the repository root, or: python3 web-ui/test_server.py)
@@ -10,6 +10,7 @@ Run:  python3 -m unittest discover -s web-ui -p "test_server.py" -v
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -171,6 +172,12 @@ class TestBuildCommand(unittest.TestCase):
                     encoding="utf-8")
                 self.assertFalse(
                     server.scope_yaml_reference_available(usable))
+            for non_string in ("null", "~", "false", "123"):
+                usable.write_text(
+                    "authorization_reference: %s\n" % non_string,
+                    encoding="utf-8")
+                self.assertFalse(
+                    server.scope_yaml_reference_available(usable))
             usable.write_text("targets: [contaia.site]\n",
                               encoding="utf-8")
             self.assertFalse(server.scope_yaml_reference_available(usable))
@@ -187,6 +194,142 @@ class TestSessionName(unittest.TestCase):
         for bad in ("../etc", "/etc/passwd", "a/b", "a b", "..", ""):
             with self.subTest(bad=bad):
                 self.assertRaises(server.ValidationError, server.validate_session_name, bad)
+
+
+class TestSessionSummary(unittest.TestCase):
+    def test_list_sessions_exposes_only_validated_display_metadata(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session = root / "2026-11-27T20-00-00"
+            session.mkdir()
+            (session / "execution_manifest.json").write_text(json.dumps({
+                "target": "127.0.0.1",
+                "status": "completed",
+                "timestamp_utc": "2026-11-28T02:00:00+00:00",
+                "written_authorization_confirmed": True,
+            }), encoding="utf-8")
+            with mock.patch.object(server, "SESSIONS_DIR", root):
+                sessions = server.list_sessions()
+            self.assertEqual(sessions, [{
+                "name": session.name,
+                "manifest": True,
+                "findings": False,
+                "target": "127.0.0.1",
+                "status": "completed",
+                "created_at": "2026-11-28T02:00:00+00:00",
+            }])
+
+
+class TestClientApprovalIsolation(unittest.TestCase):
+    def test_approvals_and_plans_do_not_cross_client_ids(self):
+        state = server.State()
+        first = "1" * 32
+        second = "2" * 32
+        state.set_pending_plan({"target": "127.0.0.1"}, first)
+        state.set_dry_run({"target": "127.0.0.1"}, ["dry-run"], first)
+        state.set_moodle_dry_run({"sesskey": "secret"}, ["moodle"], first)
+        state.set_engine_plan({"goal": "local"}, None, first)
+        state.set_msf_plan({"module": "allowlisted"}, first)
+
+        self.assertIsNotNone(state.get_pending_plan(first))
+        self.assertIsNotNone(state.get_dry_run(first))
+        self.assertIsNotNone(state.get_moodle_dry_run(first))
+        self.assertIsNotNone(state.get_engine_plan(first))
+        self.assertIsNotNone(state.get_msf_plan(first))
+        self.assertIsNone(state.get_pending_plan(second))
+        self.assertIsNone(state.get_dry_run(second))
+        self.assertIsNone(state.get_moodle_dry_run(second))
+        self.assertIsNone(state.get_engine_plan(second))
+        self.assertIsNone(state.get_msf_plan(second))
+
+
+class TestOwnedSubprocessStop(unittest.TestCase):
+    def test_stop_during_reservation_is_remembered_and_owner_scoped(self):
+        class Process:
+            def __init__(self):
+                self.terminated = False
+
+            def terminate(self):
+                self.terminated = True
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                self.terminated = True
+
+        state = server.State()
+        owner = "1" * 32
+        other = "2" * 32
+        self.assertTrue(state.reserve_process(owner))
+        self.assertFalse(state.stop_process(other))
+        self.assertTrue(state.stop_process(owner))
+        process = Process()
+        self.assertTrue(state.set_process(process, owner))
+        process.terminate()
+        self.assertTrue(process.terminated)
+        state.clear_process(process, owner)
+        self.assertFalse(state.stop_process(owner))
+
+
+class TestMetasploitBearerHeader(unittest.TestCase):
+    def test_bearer_token_is_parsed_and_malformed_headers_rejected(self):
+        from types import SimpleNamespace
+        handler = SimpleNamespace(headers={"Authorization": "Bearer local-token"})
+        self.assertEqual(server.Handler._msf_token_from_header(handler), "local-token")
+        for value in ("Basic local-token", "Bearer", "Bearer token with-space"):
+            with self.subTest(value=value):
+                handler.headers = {"Authorization": value}
+                with self.assertRaises(server.ValidationError):
+                    server.Handler._msf_token_from_header(handler)
+
+
+class TestApiOnlyHttp(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        cls.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.base_url = "http://127.0.0.1:%d" % cls.httpd.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.thread.join(timeout=2)
+
+    def _get(self, path):
+        import urllib.error
+        import urllib.request
+        try:
+            response = urllib.request.urlopen(self.base_url + path, timeout=2)
+        except urllib.error.HTTPError as error:
+            return error.code, error.headers.get("Content-Type"), error.read()
+        with response:
+            return response.status, response.headers.get("Content-Type"), response.read()
+
+    def test_root_does_not_serve_ui(self):
+        status, content_type, body = self._get("/")
+        self.assertEqual(status, 404)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertNotIn(b"<html", body.lower())
+
+    def test_unknown_static_path_is_404(self):
+        status, content_type, body = self._get("/not-a-static-file.js")
+        self.assertEqual(status, 404)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertNotIn(b"<html", body.lower())
+
+    def test_api_status_remains_available(self):
+        import json
+        status, content_type, body = self._get("/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(content_type.startswith("application/json"))
+        self.assertEqual(json.loads(body)["backend"], "ok")
 
 
 if __name__ == "__main__":

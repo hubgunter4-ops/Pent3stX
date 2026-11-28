@@ -1,6 +1,6 @@
-"""Pent3stX Workbench — local backend (functional, controlled execution).
+"""Pent3stX Workbench — internal loopback API (controlled execution).
 
-Serves the web-ui (Design Option 1) on 127.0.0.1 only and lets it call
+Serves only the internal API on 127.0.0.1 and lets the native Tkinter GUI call
 the real ``pentestx.py`` CLI under the same guardrails as the CLI itself:
 
 * target allowlist, checked by syntax only: exactly ``contaia.site``
@@ -59,12 +59,13 @@ findings to Metasploit modules (read-only); the engine goal
 candidate module. See ``web-ui/msf/README.md`` and
 ``web-ui/msf/msf_client.py``.
 
-Run from the repository root::
+The desktop GUI starts this backend as an owned child process. For
+diagnostics, run from the repository root::
 
     python3 web-ui/server.py
 
-Then open http://127.0.0.1:8765/ — the server only listens on loopback,
-so the interface is only reachable from this machine.
+The listener is loopback-only. The root and all non-API paths return
+JSON 404; this process does not publish HTML, CSS, JavaScript or files.
 
 This file never scans, resolves or contacts a target by itself; it
 only validates the request and hands the fixed command to pentestx.py.
@@ -86,6 +87,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 PORT = 8765
+DEFAULT_CLIENT_ID = "legacy"
 
 REPO_ROOT = Path(os.environ.get("PENTESTX_ROOT", Path(__file__).resolve().parent.parent))
 WEB_UI_DIR = Path(__file__).resolve().parent
@@ -132,17 +134,6 @@ EXECUTE_TIMEOUT = 600
 MAX_FINDINGS = 200
 
 _SESSION_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
-
-CONTENT_TYPES = {
-    ".html": "text/html; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".js": "text/javascript; charset=utf-8",
-    ".json": "application/json",
-    ".gif": "image/gif",
-    ".png": "image/png",
-    ".svg": "image/svg+xml",
-}
-
 
 class ValidationError(ValueError):
     """A request failed a server-side guardrail check."""
@@ -253,18 +244,118 @@ def scope_yaml_reference_available(scope_path=None):
         if isinstance(data, dict):
             reference = data.get("authorization_reference")
     except ImportError:
-        # Parser mínimo (igual que el de la CLI): una línea
-        # "authorization_reference: <valor>".
-        for line in text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("authorization_reference:"):
-                reference = stripped.split(":", 1)[1].strip().strip("'\"")
-                break
+        reference = _fallback_scope_reference(text)
     except Exception:
         return False
     if not isinstance(reference, str):
         return False
     return reference.strip().lower() not in PLACEHOLDER_REFERENCES
+
+
+def _fallback_scope_reference(text):
+    """Read the documented flat/sequence subset when PyYAML is absent.
+
+    The fallback deliberately rejects unsupported YAML syntax instead of
+    treating malformed text as an authorization reference. It accepts the
+    repository's scope format: top-level scalars and block/flow sequences.
+    """
+    reference = None
+    seen = set()
+    collection = None
+
+    def parse_scalar(value):
+        value = value.strip()
+        if not value:
+            return ""
+        if value[0] in "'\"":
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote:
+                raise ValueError("quoted scalar is not closed")
+            inner = value[1:-1]
+            if quote == '"':
+                parsed = json.loads(value)
+                if not isinstance(parsed, str):
+                    raise ValueError("expected scalar string")
+                return parsed
+            if re.search(r"(?<!')'(?!')", inner.replace("''", "")):
+                raise ValueError("single-quoted scalar is malformed")
+            return inner.replace("''", "'")
+        if any(char in value for char in "[]{}'\""):
+            raise ValueError("collection marker in plain scalar")
+        if value[0] in "&*!|>?%@`" or re.search(r":\s", value):
+            raise ValueError("unsupported YAML scalar syntax")
+        if value.lower() in ("null", "~"):
+            return None
+        if value.lower() in ("true", "yes", "on"):
+            return True
+        if value.lower() in ("false", "no", "off"):
+            return False
+        if re.fullmatch(r"[-+]?[0-9]+", value):
+            return int(value)
+        if re.fullmatch(r"[-+]?(?:[0-9]+\.[0-9]*|\.[0-9]+)", value):
+            return float(value)
+        return value
+
+    def validate_value(value):
+        value = value.strip()
+        if not value:
+            return ""
+        if value.startswith("["):
+            if not value.endswith("]"):
+                raise ValueError("unclosed flow sequence")
+            content = value[1:-1].strip()
+            if not content:
+                return []
+            parts = [part.strip() for part in content.split(",")]
+            if any(not part for part in parts):
+                raise ValueError("empty flow sequence item")
+            return [parse_scalar(part) for part in parts]
+        if value.startswith("{"):
+            if not value.endswith("}"):
+                raise ValueError("unclosed flow mapping")
+            raise ValueError("flow mappings require PyYAML")
+        return parse_scalar(value)
+
+    try:
+        for raw_line in text.splitlines():
+            if "\t" in raw_line[:len(raw_line) - len(raw_line.lstrip())]:
+                return None
+            line = re.split(r"\s+#", raw_line, maxsplit=1)[0].rstrip()
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            stripped = line.strip()
+            indentation = len(line) - len(line.lstrip())
+            if indentation:
+                if collection is None or not stripped.startswith("- "):
+                    return None
+                validate_value(stripped[2:])
+                continue
+            if stripped in ("---", "..."):
+                continue
+            if ":" not in stripped:
+                return None
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+                return None
+            if key in seen:
+                return None
+            seen.add(key)
+            value = value.strip()
+            if not value:
+                collection = key
+                if key == "authorization_reference":
+                    reference = ""
+                continue
+            collection = None
+            parsed = validate_value(value)
+            if key == "authorization_reference":
+                if not isinstance(parsed, str):
+                    return None
+                reference = parsed
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return reference
 
 
 def validate_plan(payload):
@@ -863,7 +954,7 @@ def _save_engine_run(run_id, plan, step_results, status):
     return str(directory)
 
 
-def run_engine_plan(approved):
+def run_engine_plan(approved, client_id=DEFAULT_CLIENT_ID):
     """Run an approved engine plan step by step.
 
     Before each step, its preconditions are re-checked against the
@@ -947,9 +1038,9 @@ def run_engine_plan(approved):
             result = _run_engine_msf_step(plan, step, results)
         elif step["tool"] == "moodle_sqli":
             result = _run_engine_moodle_step(
-                plan, step, moodle_request)
+                plan, step, moodle_request, client_id)
         else:
-            result = _run_engine_pentestx_step(plan, step)
+            result = _run_engine_pentestx_step(plan, step, client_id)
         results[step_id] = result
         step_results.append(result)
         if result["status"] == "failed" and step.get("on_fail") == "stop":
@@ -1119,11 +1210,11 @@ def _run_engine_msf_step(plan, step, results, token=None):
         else "el módulo terminó con estado %s" % result.get("status"))
 
 
-def _run_engine_pentestx_step(plan, step):
+def _run_engine_pentestx_step(plan, step, client_id=DEFAULT_CLIENT_ID):
     """One pentestx step: dry-run of the exact command, then execute."""
     engine = _load_engine()
     dry = engine.build_pentestx_command(plan, step, dry_run=True)
-    result = run_cli(dry, DRY_RUN_TIMEOUT)
+    result = run_cli(dry, DRY_RUN_TIMEOUT, client_id)
     if result["exit_code"] != 0:
         return {
             "id": step["id"], "action": step["action"],
@@ -1135,7 +1226,7 @@ def _run_engine_pentestx_step(plan, step):
             "reason": "dry-run rechazado por la CLI",
         }
     command = engine.build_pentestx_command(plan, step, dry_run=False)
-    result = run_cli(command, EXECUTE_TIMEOUT)
+    result = run_cli(command, EXECUTE_TIMEOUT, client_id)
     return {
         "id": step["id"], "action": step["action"],
         "tool": "pentestx",
@@ -1149,7 +1240,9 @@ def _run_engine_pentestx_step(plan, step):
     }
 
 
-def _run_engine_moodle_step(plan, step, moodle_request):
+def _run_engine_moodle_step(
+    plan, step, moodle_request, client_id=DEFAULT_CLIENT_ID
+):
     """One Moodle step: dry-run, then run the tool (detect or extract).
 
     The dry-run and run commands are rebuilt from the approved
@@ -1161,7 +1254,7 @@ def _run_engine_moodle_step(plan, step, moodle_request):
     else:
         request = moodle_request
     dry = build_moodle_command(request, dry_run=True)
-    result = _run_process(dry, 60)
+    result = _run_process(dry, 60, client_id)
     if result["exit_code"] != 0:
         return {
             "id": step["id"], "action": step["action"],
@@ -1172,7 +1265,7 @@ def _run_engine_moodle_step(plan, step, moodle_request):
             "reason": "dry-run rechazado por la herramienta",
         }
     command = build_moodle_command(request, dry_run=False)
-    result = _run_process(command, EXECUTE_TIMEOUT)
+    result = _run_process(command, EXECUTE_TIMEOUT, client_id)
     data = _parse_tool_json(result["stdout"])
     vulnerable = (data or {}).get("vulnerable")
     status = "completed" if result["exit_code"] == 0 else "failed"
@@ -1211,10 +1304,26 @@ def list_sessions():
     for entry in sorted(SESSIONS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not entry.is_dir():
             continue
+        has_manifest = (entry / "execution_manifest.json").exists()
+        manifest = read_manifest(entry) if has_manifest else None
+        target = manifest.get("target") if isinstance(manifest, dict) else None
+        try:
+            target = validate_target(target) if target else None
+        except ValidationError:
+            target = None
+        status = manifest.get("status") if isinstance(manifest, dict) else None
+        if not isinstance(status, str) or len(status) > 40:
+            status = "available"
+        created_at = manifest.get("timestamp_utc") if isinstance(manifest, dict) else None
+        if not isinstance(created_at, str) or len(created_at) > 40:
+            created_at = None
         sessions.append({
             "name": entry.name,
-            "manifest": (entry / "execution_manifest.json").exists(),
+            "manifest": has_manifest,
             "findings": (entry / "findings_db.json").exists(),
+            "target": target or "—",
+            "status": status,
+            "created_at": created_at,
         })
     return sessions
 
@@ -1248,68 +1357,75 @@ def read_findings(session_name):
 
 
 class State:
-    """Server-side state: the approved dry-run and the running process."""
+    """Server-side approvals isolated by the GUI client's random session ID."""
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.dry_run = None  # {"hash": str, "plan": dict, "command": list}
-        self.pending_plan = None  # latest generated plan, approved or not
-        self.moodle_dry_run = None  # {"hash": str, "request": dict, "command": list}
-        self.engine_plan = None  # {"hash": str, "plan": dict, "moodle_request": dict|None}
-        self.msf_plan = None  # approved MSF plan (validated, not executed)
+        self.dry_runs = {}  # client_id -> {"hash", "plan", "command"}
+        self.pending_plans = {}  # client_id -> latest plan, approved or not
+        self.moodle_dry_runs = {}  # client_id -> {"hash", "request", "command"}
+        self.engine_plans = {}  # client_id -> {"hash", "plan", "moodle_request"}
+        self.msf_plans = {}  # client_id -> validated plan
         # Handlers reverse ya arrancados por este servidor, por
         # (LHOST, LPORT, PAYLOAD): el framework no tiene herramienta
         # MCP para listar jobs, así que el registro vive aquí.
         self.msf_handlers = {}
         self.process = None
+        self.process_owner = None
+        self.process_starting = False
+        self.process_cancel_requested = False
 
-    def set_pending_plan(self, plan):
+    def set_pending_plan(self, plan, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            self.pending_plan = plan
+            self.pending_plans[client_id] = plan
 
-    def get_pending_plan(self):
+    def get_pending_plan(self, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            return self.pending_plan
+            return self.pending_plans.get(client_id)
 
-    def set_dry_run(self, plan, command):
+    def set_dry_run(self, plan, command, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            self.dry_run = {"hash": command_hash(command), "plan": plan, "command": command}
+            self.dry_runs[client_id] = {
+                "hash": command_hash(command), "plan": plan, "command": command}
 
-    def get_dry_run(self):
+    def get_dry_run(self, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            return self.dry_run
+            return self.dry_runs.get(client_id)
 
-    def set_moodle_dry_run(self, request, command):
+    def set_moodle_dry_run(self, request, command, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            self.moodle_dry_run = {
+            self.moodle_dry_runs[client_id] = {
                 "hash": command_hash(command),
                 "request": request,
                 "command": command,
             }
 
-    def get_moodle_dry_run(self):
+    def get_moodle_dry_run(self, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            return self.moodle_dry_run
+            return self.moodle_dry_runs.get(client_id)
 
-    def set_engine_plan(self, plan, moodle_request):
+    def set_engine_plan(self, plan, moodle_request, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            self.engine_plan = {
+            self.engine_plans[client_id] = {
                 "hash": engine_plan_hash(plan),
                 "plan": plan,
                 "moodle_request": moodle_request,
             }
 
-    def get_engine_plan(self):
+    def get_engine_plan(self, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            return self.engine_plan
+            return self.engine_plans.get(client_id)
 
-    def set_msf_plan(self, plan):
+    def set_msf_plan(self, plan, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            self.msf_plan = plan
+            if plan is None:
+                self.msf_plans.pop(client_id, None)
+            else:
+                self.msf_plans[client_id] = plan
 
-    def get_msf_plan(self):
+    def get_msf_plan(self, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
-            return self.msf_plan
+            return self.msf_plans.get(client_id)
 
     def set_msf_handler(self, key, handler):
         with self.lock:
@@ -1319,17 +1435,48 @@ class State:
         with self.lock:
             return self.msf_handlers.get(key)
 
-    def set_process(self, proc):
+    def reserve_process(self, client_id):
         with self.lock:
+            if self.process is not None or self.process_starting:
+                return False
+            self.process_starting = True
+            self.process_owner = client_id
+            self.process_cancel_requested = False
+            return True
+
+    def set_process(self, proc, client_id=DEFAULT_CLIENT_ID):
+        with self.lock:
+            self.process_starting = False
             self.process = proc
+            self.process_owner = client_id
+            cancel_requested = self.process_cancel_requested
+            self.process_cancel_requested = False
+            return cancel_requested
 
-    def clear_process(self):
+    def cancel_process_reservation(self, client_id):
         with self.lock:
-            self.process = None
+            if self.process_starting and self.process_owner == client_id:
+                self.process_starting = False
+                self.process_owner = None
+                self.process_cancel_requested = False
 
-    def stop_process(self):
+    def clear_process(self, proc=None, client_id=DEFAULT_CLIENT_ID):
         with self.lock:
+            if (self.process is not None
+                    and (proc is None or self.process is proc)
+                    and self.process_owner == client_id):
+                self.process = None
+                self.process_owner = None
+                self.process_cancel_requested = False
+
+    def stop_process(self, client_id=DEFAULT_CLIENT_ID):
+        with self.lock:
+            if self.process_owner != client_id:
+                return False
             proc = self.process
+            if proc is None and self.process_starting:
+                self.process_cancel_requested = True
+                return True
         if proc is None:
             return False
         try:
@@ -1346,21 +1493,32 @@ class State:
 STATE = State()
 
 
-def _run_process(command, timeout):
+def _run_process(command, timeout, client_id=DEFAULT_CLIENT_ID):
     """Run a fixed command without a shell; returns stdout/stderr/exit_code.
 
     The running process is tracked in STATE so /api/stop can kill it.
     """
-    proc = subprocess.Popen(
-        command,
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        shell=False,
-        start_new_session=True,
-    )
-    STATE.set_process(proc)
+    if not STATE.reserve_process(client_id):
+        raise ValidationError("ya hay un proceso local en ejecución")
+    try:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+            start_new_session=True,
+        )
+    except Exception:
+        STATE.cancel_process_reservation(client_id)
+        raise
+    cancel_requested = STATE.set_process(proc, client_id)
+    if cancel_requested:
+        try:
+            proc.terminate()
+        except (ProcessLookupError, PermissionError):
+            pass
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
         exit_code = proc.returncode
@@ -1369,14 +1527,14 @@ def _run_process(command, timeout):
         stdout, stderr = proc.communicate()
         exit_code = 124
     finally:
-        STATE.clear_process()
+        STATE.clear_process(proc, client_id)
     return {"stdout": stdout or "", "stderr": stderr or "", "exit_code": exit_code}
 
 
-def run_cli(command, timeout):
+def run_cli(command, timeout, client_id=DEFAULT_CLIENT_ID):
     """Run pentestx.py without a shell; returns stdout/stderr/exit_code."""
     before = {s["name"] for s in list_sessions()}
-    result = _run_process(command, timeout)
+    result = _run_process(command, timeout, client_id)
     after = list_sessions()
     new_sessions = [s for s in after if s["name"] not in before]
     session_dir = new_sessions[0]["name"] if new_sessions else (after[0]["name"] if after else None)
@@ -1418,6 +1576,25 @@ class Handler(BaseHTTPRequestHandler):
             raise ValidationError("cuerpo JSON no válido")
         return data
 
+    def _client_id(self):
+        value = self.headers.get("X-PentestX-Client-ID")
+        if value is None:
+            return DEFAULT_CLIENT_ID
+        if not re.fullmatch(r"[0-9a-f]{32}", value):
+            raise ValidationError("identificador de instancia no válido")
+        return value
+
+    def _msf_token_from_header(self):
+        authorization = self.headers.get("Authorization")
+        if authorization is None:
+            return None
+        scheme, separator, token = authorization.partition(" ")
+        if (scheme.lower() != "bearer" or not separator or not token
+                or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
+                       for ch in token)):
+            raise ValidationError("Authorization Metasploit debe usar Bearer")
+        return token
+
     # -- API ----------------------------------------------------------
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1446,10 +1623,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_json(200, {"session": name, "findings": findings})
             elif path == "/api/msf/status":
-                self._send_json(200, msf_status_info())
+                self._send_json(200, msf_status_info(
+                    self._msf_token_from_header()))
             elif path == "/api/msf/sessions":
                 msf = _load_msf()
-                client = _msf_client()
+                client = _msf_client(self._msf_token_from_header())
                 try:
                     sessions = client.session_list()
                 except msf.MsfNotConnected:
@@ -1473,7 +1651,7 @@ class Handler(BaseHTTPRequestHandler):
                         module_type = msf.validate_module_type(module_type)
                     except msf.ValidationError as exc:
                         raise ValidationError(str(exc))
-                client = _msf_client()
+                client = _msf_client(self._msf_token_from_header())
                 try:
                     data = client.search_modules(q or module_type or "")
                 except msf.MsfNotConnected:
@@ -1501,7 +1679,7 @@ class Handler(BaseHTTPRequestHandler):
                 msf = _load_msf()
                 workspace = parse_qs(parsed.query).get(
                     "workspace", ["default"])[0]
-                client = _msf_client()
+                client = _msf_client(self._msf_token_from_header())
                 try:
                     if path == "/api/msf/hosts":
                         data = client.host_info(workspace)
@@ -1524,7 +1702,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not uuid:
                     self._send_json(400, {"error": "falta el parámetro uuid"})
                     return
-                client = _msf_client()
+                client = _msf_client(self._msf_token_from_header())
                 try:
                     data = client.module_results(uuid)
                 except msf.MsfNotConnected:
@@ -1536,10 +1714,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(502, {"error": str(exc)})
                     return
                 self._send_json(200, {"connected": True, "data": data})
-            elif path == "/" or path == "":
-                self._serve_static("index.html")
             else:
-                self._serve_static(path.lstrip("/"))
+                self._send_json(404, {"error": "ruta no encontrada"})
         except ValidationError as exc:
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - report as JSON, never crash
@@ -1549,6 +1725,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         try:
+            client_id = self._client_id()
             if path == "/api/plan":
                 payload = self._read_json()
                 plan = validate_plan(payload)
@@ -1561,13 +1738,13 @@ class Handler(BaseHTTPRequestHandler):
                 # comando que se previsualiza); la casilla de la
                 # interfaz es lo que autoriza la EJECUCIÓN real, y
                 # el plan registra si venía marcada o no.
-                STATE.set_pending_plan(plan)
+                STATE.set_pending_plan(plan, client_id)
                 command = build_command(plan, dry_run=True)
-                result = run_cli(command, DRY_RUN_TIMEOUT)
+                result = run_cli(command, DRY_RUN_TIMEOUT, client_id)
                 approved = result["exit_code"] == 0
                 if approved:
                     # Only a successful dry-run approves the exact command.
-                    STATE.set_dry_run(plan, command)
+                    STATE.set_dry_run(plan, command, client_id)
                 # La CLI toma su referencia de scope.yaml: si el
                 # dry-run falla por falta de referencia, el plan
                 # sigue siendo una medición del scope y se dice
@@ -1615,7 +1792,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {
                         "error": SCOPE_YAML_NO_REFERENCE_MSG})
                     return
-                approved = STATE.get_dry_run()
+                approved = STATE.get_dry_run(client_id)
                 if approved is not None:
                     plan = approved["plan"]
                 else:
@@ -1624,7 +1801,7 @@ class Handler(BaseHTTPRequestHandler):
                     # se usa el último plan generado y se hace su
                     # dry-run con la casilla ya marcada, antes de
                     # ejecutar.
-                    plan = STATE.get_pending_plan()
+                    plan = STATE.get_pending_plan(client_id)
                     if plan is None:
                         self._send_json(409, {
                             "error": "sin dry-run previo: ejecuta "
@@ -1635,7 +1812,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "autorización confirmada por casilla, "
                                     "sin referencia en la interfaz"))
                     command = build_command(plan, dry_run=True)
-                    result = run_cli(command, DRY_RUN_TIMEOUT)
+                    result = run_cli(command, DRY_RUN_TIMEOUT, client_id)
                     if result["exit_code"] != 0:
                         self._send_json(200, {
                             "dry_run_approved": False,
@@ -1649,14 +1826,14 @@ class Handler(BaseHTTPRequestHandler):
                                      "ejecutó nada",
                         })
                         return
-                    STATE.set_dry_run(plan, command)
+                    STATE.set_dry_run(plan, command, client_id)
                 command = build_command(plan, dry_run=False)
                 if command_hash(command) != command_hash(
                         build_command(plan, dry_run=True)[:-1]):
                     self._send_json(409, {
                         "error": "el comando cambió tras el dry-run"})
                     return
-                result = run_cli(command, EXECUTE_TIMEOUT)
+                result = run_cli(command, EXECUTE_TIMEOUT, client_id)
                 self._send_json(200, {
                     "dry_run_approved": True,
                     "command_exact": command,
@@ -1674,9 +1851,9 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 request = validate_moodle_request(payload)
                 command = build_moodle_command(request, dry_run=True)
-                result = _run_process(command, 60)
+                result = _run_process(command, 60, client_id)
                 if result["exit_code"] == 0:
-                    STATE.set_moodle_dry_run(request, command)
+                    STATE.set_moodle_dry_run(request, command, client_id)
                 data = _parse_tool_json(result["stdout"])
                 self._send_json(200, {
                     "dry_run": True,
@@ -1700,7 +1877,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "autorización escrita para este alcance' "
                                  "para ejecutar"})
                     return
-                approved = STATE.get_moodle_dry_run()
+                approved = STATE.get_moodle_dry_run(client_id)
                 if approved is None:
                     self._send_json(409, {
                         "error": "sin dry-run previo: ejecuta "
@@ -1717,7 +1894,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {
                         "error": "el comando cambió tras el dry-run"})
                     return
-                result = _run_process(command, EXECUTE_TIMEOUT)
+                result = _run_process(command, EXECUTE_TIMEOUT, client_id)
                 data = _parse_tool_json(result["stdout"])
                 self._send_json(200, {
                     "dry_run_approved": True,
@@ -1731,7 +1908,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 approved = validate_engine_plan_request(payload)
                 plan = approved["plan"]
-                STATE.set_engine_plan(plan, approved["moodle_request"])
+                STATE.set_engine_plan(plan, approved["moodle_request"], client_id)
                 self._send_json(200, {
                     "plan": _redact_plan(plan),
                     "plan_hash": engine_plan_hash(plan),
@@ -1750,7 +1927,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "autorización escrita para este alcance' "
                                  "para ejecutar"})
                     return
-                approved = STATE.get_engine_plan()
+                approved = STATE.get_engine_plan(client_id)
                 if approved is None:
                     self._send_json(409, {
                         "error": "sin plan aprobado: ejecuta "
@@ -1775,10 +1952,11 @@ class Handler(BaseHTTPRequestHandler):
                             authorization_note=(
                                 "autorización confirmada por casilla, "
                                 "sin referencia en la interfaz"))
-                STATE.set_engine_plan(plan, approved.get("moodle_request"))
+                STATE.set_engine_plan(plan, approved.get("moodle_request"), client_id)
                 result = run_engine_plan(
                     {"plan": plan,
-                     "moodle_request": approved.get("moodle_request")})
+                     "moodle_request": approved.get("moodle_request")},
+                    client_id)
                 result["confirm_written_authorization"] = True
                 self._send_json(200, result)
             elif path == "/api/msf/status":
@@ -1898,7 +2076,7 @@ class Handler(BaseHTTPRequestHandler):
                         plan["type"], plan["name"])
                 except (msf.MsfError, msf.ValidationError):
                     module_info = None
-                STATE.set_msf_plan(plan)
+                STATE.set_msf_plan(plan, client_id)
                 self._send_json(200, {
                     "plan": {
                         "type": plan["type"],
@@ -1927,7 +2105,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "autorización escrita para este alcance' "
                                  "para ejecutar"})
                     return
-                approved = STATE.get_msf_plan()
+                approved = STATE.get_msf_plan(client_id)
                 if approved is None:
                     self._send_json(409, {
                         "error": "sin plan aprobado: ejecuta "
@@ -2042,7 +2220,7 @@ class Handler(BaseHTTPRequestHandler):
                     "confirm_written_authorization": True,
                 })
             elif path == "/api/stop":
-                stopped = STATE.stop_process()
+                stopped = STATE.stop_process(client_id)
                 self._send_json(200, {"stopped": stopped})
             else:
                 self._send_json(404, {"error": "ruta no encontrada"})
@@ -2051,31 +2229,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - report as JSON, never crash
             self._send_json(500, {"error": "error interno: %s" % exc})
 
-    # -- static files -------------------------------------------------
-    def _serve_static(self, name):
-        if name.endswith(".py") or "/." in ("/" + name) or name.startswith("."):
-            self._send_json(404, {"error": "archivo no encontrado"})
-            return
-        target = (WEB_UI_DIR / name).resolve()
-        if not str(target).startswith(str(WEB_UI_DIR.resolve())) or not target.is_file():
-            self._send_json(404, {"error": "archivo no encontrado"})
-            return
-        ctype = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        data = target.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-
 def main():
     if not PENTESTX.is_file():
         print("AVISO: pentestx.py no encontrado en %s" % REPO_ROOT, file=sys.stderr)
         print("Arranca el servidor desde la raíz del repositorio clonado.", file=sys.stderr)
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print("Pent3stX Workbench backend en http://%s:%d/ (solo local)" % (HOST, PORT))
+    print("Pent3stX Workbench API en http://%s:%d/api/status (solo local)" % (HOST, PORT))
     print("Raíz del repo: %s" % REPO_ROOT)
+    print("Servicio interno de la GUI; las rutas no API devuelven 404 JSON.")
     print("Pulsa Ctrl+C para detenerlo.")
     try:
         server.serve_forever()

@@ -1,132 +1,75 @@
-# Tutorial de PentestX GUI
+# Tutorial de Pent3stX Workbench (Tkinter/ttk)
 
-## 1. Propósito
+## 1. Propósito y arquitectura
 
-`pentestx_gui.py` es una interfaz de escritorio local construida con **Tkinter/ttk**. Presenta visualmente el planificador de PentestX y delega la validación de target, alcance, autorización, perfiles, límites y generación de evidencia en `pentestx.py`. No abre un servidor web, no modifica `kk2_repaired.py` y no ejecuta nada en segundo plano después de cerrar la ventana.
+`pentestx_gui.py` es una aplicación de escritorio local. Presenta el Workbench de Pent3stX y delega validación, guardrails, planificación, ejecución y evidencia en el backend existente (`web-ui/server.py`), que ahora es una API interna en `127.0.0.1:8765` y no sirve páginas web. El backend se inicia/verifica como proceso local y se cierra solo si lo inició esta GUI.
 
-La interfaz está pensada para operadores que necesitan revisar un plan antes de iniciar una evaluación autorizada. El diseño usa una jerarquía de cuatro bloques: **alcance**, **fases**, **parámetros** y **consola de ejecución**.
+La GUI no importa ni restaura módulos del legado `archive/kk2_legacy.py`. Usa Tkinter/ttk y bibliotecas estándar; no requiere instalar paquetes pip.
 
-## 2. Instalación y arranque
+## 2. Requisitos y arranque
 
-En Kali o en una distribución con Python 3 y Tkinter:
+Se necesita Python 3 y el módulo Tkinter de la misma instalación. En Debian/Kali, si el import de tkinter no está disponible, el paquete del sistema suele llamarse `python3-tk`.
 
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-tk
 cd /ruta/al/repositorio
 python3 pentestx_gui.py
 ```
 
-La GUI no requiere paquetes Python adicionales para funcionar. `PyYAML` continúa siendo opcional y solo se necesita para cargar políticas YAML.
+No hace falta iniciar el backend manualmente. Si el puerto local `8765` ya tiene un servicio, la GUI verifica `/api/status` y solo se conecta si la raíz y la identidad corresponden a este repositorio. Un servicio no verificado provoca un error y no recibe acciones.
 
-## 3. Ejecutar un plan autorizado
+## 3. Configuración y target editable
 
-1. Escribe un **Target** que controles o que esté incluido en una autorización escrita.
-2. Selecciona `passive` para comenzar sin tráfico activo o `active` si el alcance aprobado lo permite.
-3. Marca las fases necesarias. Si no se marca ninguna, la interfaz usa `passive` como valor seguro.
-4. Revisa la tabla **PLAN OVERVIEW**, el workspace y los parámetros.
-5. Marca **Autorización escrita** y pulsa **Ejecutar**.
-6. Acepta la confirmación visual solo después de revisar el alcance.
-7. Revisa el workspace indicado y conserva únicamente la evidencia que corresponda a las reglas de compromiso.
+En la barra superior del Workbench:
 
-La GUI no incluye una acción dry-run. Para generar un manifiesto sin tráfico, usa la opción `--dry-run` de la CLI.
+- **Target** es texto libre editable; no hay autocompletado ni sugerencias.
+- **Scope** es `passive` o `active`.
+- **Pipeline** es `standard`, `with_intrusive`, `with_owasp` o `full_web`.
+- **Aplicar** solo confirma localmente los valores visibles; la validación autoritativa ocurre en el servidor.
+- **Guardar** persiste target, scope y pipeline en `$XDG_CONFIG_HOME/pentestx/preferences.json` o `~/.config/pentestx/preferences.json`. Nunca se guardan cookies, sesskey ni el token de Metasploit.
 
-## 4. Configuración de fases
+El backend aplica su allowlist exacta y valida sin resolver DNS. Las acciones activas y los pipelines intrusivos requieren `scope=active`.
 
-Las fases disponibles son las acciones soportadas por la CLI: reconocimiento pasivo/activo, enumeración web, puertos, vulnerabilidades, revisión OWASP, revisión de findings, correlación, reporte, escaneo intrusivo controlado, perfiles allowlisted y pipelines correlacionados. Los parámetros de pipeline, perfil OWASP, perfil de herramienta, findings y exclusiones se pasan a la capa CLI sin reimplementar su lógica.
+## 4. Plan y ejecución
 
-Para un pipeline correlacionado, selecciona `correlated` y elige `standard`, `with_intrusive`, `with_owasp` o `full_web`. Para `intrusive`, deja `auto` salvo que el propietario del alcance haya aprobado un perfil explícito. Los campos de puertos, tasa y timeout respetan las validaciones y los topes de `pentestx.py`.
+1. Selecciona una fase en `OPERATIONS • PHASES`.
+2. Pulsa **Ver plan (dry-run)**. El backend devuelve el comando y manifiesto exactos; la GUI los muestra, pero no ejecuta el assessment.
+3. Solo si el dry-run fue aprobado para la configuración actual se habilita **Ejecutar**.
+4. Revisa la confirmación modal y marca **“Confirmo que tengo autorización escrita para este alcance”**. El backend requiere además una referencia usable en `scope.yaml`; la casilla no sustituye el documento.
+5. Usa **Pausar / detener** para pedir `/api/stop` durante una evaluación iniciada desde esta GUI. Al cerrar, si la GUI inició el backend y hay una evaluación activa, solicita la parada antes de cerrar. Si el backend preexistía y se verificó, no detiene un servicio compartido.
 
-## 5. Evidencia y resultados
+Cualquier cambio a target, scope, pipeline o fase invalida el preview; hay que volver a generar el dry-run. No se ejecutan escaneos durante pruebas de la GUI.
 
-La consola muestra stdout y stderr combinados del proceso. Los artefactos se escriben bajo el workspace configurado, incluyendo manifiestos de sesión, findings, capturas hashadas y reportes cuando la fase correspondiente se ejecuta. El código de salida aparece en la etiqueta de estado superior.
+## 5. Sesiones, findings y archivos
 
-Los findings generados por la revisión basada en evidencia siguen requiriendo revisión manual.
+`Session Map` muestra sesiones reales que el backend encontró en el workspace, `Plan Overview` conserva el último comando dry-run, `Tasks` indica el estado y el Inspector permite revisar pipeline, perfiles allowlisted y findings. **Actualizar sesiones** y **Cargar findings** consultan evidencia local ya generada.
 
-## 6. Comprobación local sin tocar la red
+**Abrir** e **Importar** leen un archivo local de hasta 1 MiB como datos informativos; no lo ejecutan ni aplican contenido a la configuración. **Exportar** escribe un informe JSON con la sesión seleccionada y findings; la selección de ruta la realiza el usuario.
+
+## 6. Motor y adaptadores
+
+### Motor de planificación
+
+En **Evaluaciones → Motor: generar plan…**, selecciona uno de los goals del backend (`owasp_report`, `full_assessment`, `moodle_sqli_confirm` o `msf_targeted`). El plan aparece redactado y no ejecuta hasta que se confirma mediante la casilla. Para `moodle_sqli_confirm`, sesskey y cookie son campos enmascarados en memoria; un cambio en target/scope/goal/credenciales invalida el plan.
+
+### Moodle SQLi (local)
+
+En **Herramientas → Moodle SQLi (local)…**, el destino permanece fijado en `http://127.0.0.1:8080/moodle`. Introduce sesskey y cookie vigentes; selecciona solo `database`, `username` o ambos. Usa primero **Dry-run payloads**; después revisa la salida y confirma la ejecución con la casilla. No se extrae password hash.
+
+### Metasploit local
+
+En **Herramientas → Metasploit (local)…** puedes comprobar estado, buscar módulos, consultar detalles, editar las opciones JSON, generar un plan `check` o `run`, correlacionar findings existentes y ver/parar sesiones. El token se oculta y solo vive en memoria. La búsqueda y correlación son consultas de lectura; `check`, `run` y detener sesión muestran una confirmación explícita. Las reglas finales de target, `LHOST` y acciones peligrosas las aplica el backend/`msfmcpd`.
+
+## 7. Solución de problemas y pruebas
+
+- **No existe `tkinter`:** instala el paquete del sistema que proporciona Tkinter para tu versión de Python; no se soluciona con `pip install tkinter`.
+- **Backend no verificado o puerto ocupado:** confirma que no haya otro servicio en `127.0.0.1:8765`; la GUI no se conecta a un proceso cuya identidad no coincida.
+- **Dry-run rechazado:** revisa el mensaje del backend, el target, scope, pipeline y referencia `scope.yaml`.
+- **Ejecución rechazada:** verifica autorización escrita, la casilla y la referencia usable en `scope.yaml`.
+
+Pruebas unitarias seguras (mocks/dry-run, sin evaluar un objetivo):
 
 ```bash
-python3 -m py_compile pentestx_gui.py pentestx.py kk2_repaired.py
-printf 'q\n' | python3 pentestx.py --interactive --no-animate --no-color
-python3 pentestx.py --target example.com --scope passive \
-  --action passive correlate report \
-  --confirm-written-authorization --dry-run
+python3 -m py_compile pentestx_gui.py pentestx_gui_backend.py web-ui/server.py
+python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s web-ui -p 'test_server.py' -v
 ```
-
-Para verificar la interfaz en una sesión gráfica, arráncala y usa un target de documentación como `example.com`; la interfaz no resuelve el target localmente.
-
-## 7. Resolución de problemas
-
-Si Python informa que no existe `tkinter`, instala el paquete del sistema `python3-tk`. Si una fase rechaza la operación, lee el mensaje de la consola: la interfaz no omite las restricciones de la CLI. Si un perfil YAML no carga, valida primero su sintaxis con `yaml.safe_load` y confirma que las claves estén dentro de las allowlists documentadas.
-
-Usa únicamente targets propios o expresamente autorizados. No introduzcas credenciales, cookies, secretos ni datos de producción en los campos de la GUI o en archivos de evidencia.
-
-
-## 8. Propuesta visual inspirada en Ettercap
-
-La segunda iteración adopta una composición de estación de trabajo similar a la de herramientas clásicas GTK de seguridad, tomando como referencia la organización visual de Ettercap: **menú superior**, **barra de acciones**, **árbol de operaciones**, **área central de sesión**, **inspector lateral** y **barra de estado**. La referencia es únicamente de composición y densidad; no se copiaron funciones, código, identidad visual ni operaciones de Ettercap.
-
-La adaptación a PentestX cambia los conceptos de red por los propios de esta herramienta: `TARGET SCOPE`, fases autorizadas, `SESSION MAP`, `SESSION INSPECTOR`, findings, pipelines, perfiles allowlisted y consola de `pentestx.py`. No se añadieron sniffing, ARP poisoning, MITM, interceptación, filtrado de tráfico ni otras funciones de Ettercap.
-
-El árbol izquierdo permite activar o desactivar fases; el panel central muestra el plan y la consola; el inspector derecho concentra pipeline, perfiles, findings, políticas YAML y workspace. La configuración mantiene el mismo contrato de seguridad de la CLI.
-
-
-## 9. Detección de parámetros y sugerencias
-
-La GUI clasifica el target **solo por sintaxis local**, sin resolver DNS, hacer ping ni generar solicitudes. Reconoce IP, dominio, URL HTTP/HTTPS, red CIDR, lista de targets y valores inválidos.
-
-Al escribir un target muestra una recomendación conservadora basada en el tipo detectado. Por ejemplo, una URL sugiere comenzar con `passive` y el pipeline `with_owasp`; una IP sugiere `host_baseline` únicamente si existe autorización para una fase activa; y una red CIDR sugiere `standard` antes de considerar `network_bounded`.
-
-Las sugerencias no se aplican de manera automática. El operador debe pulsar **Aplicar sugerencia**, revisar los valores modificados y volver a revisar target, scope, fases y autorización antes de previsualizar o ejecutar. El botón no ejecuta procesos ni tráfico.
-
-
-## 10. Reglas basadas en puertos detectados
-
-El inspector incluye `Detected ports` y los botones **Analizar puertos** y **Aplicar regla**. El operador puede introducir una lista de puertos o cargar un `findings_db.json` local. La GUI solo lee campos semánticos como `port`, `ports`, `open_ports` o `detected_ports`; no ejecuta Nmap, no consulta servicios y no resuelve hosts.
-
-Las reglas actuales son conservadoras:
-
-| Puertos | Sugerencia |
-|---|---|
-| HTTP/HTTPS y alternativos (`80`, `443`, `8000`, `8080`, `8443`, etc.) | `with_owasp` y revisión de headers/métodos; propone los puertos web detectados para una fase posterior. |
-| Bases de datos (`1433`, `1521`, `3306`, `5432`, `6379`, `9200`, `27017`) | `standard` y revisión pasiva; nunca propone credenciales o extracción. |
-| SMB/NFS (`139`, `445`, `2049`) | `standard` y revisión pasiva; requiere revisar el alcance antes de enumerar. |
-| SSH/Telnet/RDP (`22`, `23`, `3389`) | `standard` y revisión pasiva; no habilita fuerza bruta ni autenticación automática. |
-| DNS (`53`) | `standard`; la GUI no realiza consultas DNS. |
-| Otros | `standard` y revisión manual. |
-
-Las reglas no se aplican automáticamente. **Aplicar regla** solo modifica el pipeline y, para puertos web, el campo de puertos intrusivos. El plan debe revisarse y continuar en `dry-run` antes de cualquier ejecución.
-
-
-### Reglas adicionales de servicios comunes
-
-| Servicio y puertos | Recomendación segura |
-|---|---|
-| SSH (`22`) | Revisión pasiva de versión, configuración y exposición. |
-| FTP/FTPS (`21`, `990`) | Revisión pasiva de cifrado, modo anónimo y configuración. |
-| SMTP (`25`, `465`, `587`) | Revisión pasiva de TLS, banner y relay autorizado. |
-| POP3/IMAP (`110`, `143`, `993`, `995`) | Revisión pasiva de TLS y configuración; no se accede a buzones. |
-
-Estas reglas no prueban credenciales, no envían mensajes, no abren sesiones contra los servicios y no activan fuerza bruta. Solo generan una recomendación de plan `standard` que el operador debe revisar.
-
-
-### Reglas específicas de bases de datos
-
-| Motor | Puerto | Recomendación segura |
-|---|---:|---|
-| MySQL | `3306` | Revisar pasivamente exposición, TLS y configuración. |
-| PostgreSQL | `5432` | Revisar pasivamente exposición, TLS y configuración. |
-| Redis | `6379` | Revisar pasivamente exposición y controles de acceso. |
-
-Estas reglas tienen prioridad sobre la regla genérica de bases de datos. Solo generan una sugerencia `standard`; no prueban credenciales, no consultan tablas o claves y no envían comandos a los servicios.
-
-
-## 11. Pestaña de telemetría integrada
-
-La GUI incorpora el emisor del repositorio `kali-telemetry-gui` como una pestaña independiente: **◉ Telemetría**. La pestaña **◈ PentestX** conserva el planificador de evaluaciones y no comparte controles visuales con el panel de telemetría.
-
-El panel integrado permite configurar URL HTTP `GET`/`POST`, destino UDP, puerto, BSSID contextual, intentos totales y backoff. También permite guardar la configuración, encolar un mensaje de prueba, cargar un TXT local de hasta 1 MiB y consultar las métricas de cola, envíos, fallos y reintentos.
-
-El módulo integrado es `telemetry_sender.py` y conserva el envío asíncrono, los límites de 1–1000 intentos y el tratamiento del TXT como datos. El cierre de la ventana detiene el worker del emisor. La telemetría permanece separada de las operaciones PentestX: cambiar de pestaña no ejecuta un plan ni inicia tráfico por sí solo.
-
-Usa exclusivamente receptores que controles o para los que tengas autorización. UDP no cifra ni confirma procesamiento de aplicación; para HTTP prefiere HTTPS cuando corresponda.

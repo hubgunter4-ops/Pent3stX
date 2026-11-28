@@ -342,7 +342,7 @@ guardado.
 | `web-ui/engine/DESIGN.md` | Este diseño |
 | `web-ui/msf/msf_client.py` | Cliente MCP + correlación findings → módulos (`correlate_modules`, `validate_findings`, `default_options_from_info`) |
 | `web-ui/server.py` | Endpoints `/api/engine/*`, `/api/msf/correlate` y ejecución paso a paso |
-| `web-ui/app.js`, `web-ui/index.html` | Diálogo del motor, Plan Overview y consola por paso |
+| `pentestx_gui.py` | Diálogo del motor, Plan Overview y consola por paso; usa el API interno de loopback |
 
 ## 11. Tests
 

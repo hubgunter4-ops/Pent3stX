@@ -15,6 +15,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compilar módulos
-        run: python3 -m py_compile pentestx.py pentestx_gui.py pentestx_controlled.py telemetry_sender.py
+        run: python3 -m py_compile pentestx.py pentestx_gui.py pentestx_gui_backend.py pentestx_controlled.py telemetry_sender.py web-ui/server.py
       - name: Tests (solo mocks y dry-run, sin herramientas externas)
         run: python3 -m unittest discover -s tests -v
+      - name: Tests API loopback y Metasploit (solo mocks)
+        run: python3 -m unittest discover -s web-ui -p 'test_*.py' -v
+      - name: Tests Moodle SQLi (solo fixtures locales)
+        run: python3 -m unittest discover -s web-ui/tools -p 'test_*.py' -v
